@@ -8,7 +8,7 @@ from src.Logging import logger
 
 
 def main():
-    input_xlsx = 'data/input/ZOTCM_0010_0002_11M_11N.xlsx'
+    input_xlsx = 'data/input/ZOTCM_0010_0002_11M_11N (2).xlsx'
     df = pd.read_excel(input_xlsx)
 
     os.makedirs(OUTPUT_ROOT, exist_ok=True)
@@ -42,14 +42,28 @@ def main():
         logger.error(f"Error applying transformation step: {e}")
 
     # ==================================== STEP 3 ====================================
+    # try:
+    #     logger.info(break_template.replace('X', 'STEP 3'))
+    #     T.step_03(wb, "Last G/I Date", treat_as_date=True, save_name='step3_sorted_by_date.xlsx')
+    #     T.step_03(wb, "Name 2", save_name='step3_sorted_by_name2.xlsx')
+    #     T.step_03(wb, "Name of ship-to party", save_name='step3_sorted_by_shipto.xlsx')
+    #     logger.info("✅ Transformation step applied successfully.")
+    # except Exception as e:
+    #     logger.error(f"Error applying transformation step: {e}")
+
+    # ==================================== STEP 4 ====================================
     try:
-        logger.info(break_template.replace('X', 'STEP 3'))
-        T.step_03(wb, "Last G/I Date", treat_as_date=True, save_name='step3_sorted_by_date.xlsx')
-        T.step_03(wb, "Name 2", save_name='step3_sorted_by_name2.xlsx')
-        T.step_03(wb, "Name of ship-to party", save_name='step3_sorted_by_shipto.xlsx')
+        logger.info(break_template.replace("X", "STEP 4"))
+        T.step_04_create_distribution_tabs(
+            wb,
+            source_sheet_name=None,
+            header_scan_rows=20,
+            save=True,
+            save_name="step4_distribution_tabs.xlsx",
+        )
         logger.info("✅ Transformation step applied successfully.")
     except Exception as e:
-        logger.error(f"Error applying transformation step: {e}")
+        logger.error(f"Error applying transformation step 'step_04': {e}")
 
 
 if __name__ == "__main__":
