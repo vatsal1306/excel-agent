@@ -408,9 +408,9 @@ def _write_snapshot(ws, start_row: int, snap, text_col: Optional[int] = None, te
 
 
 def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header_scan_rows: int = 20,
-            blanks_last: bool = True, save_name: str = None):
+            blanks_last: bool = True, save_name: str = None) -> Workbook:
     """
-    Independent sort: loads input fresh each time, sorts by ONE column only, saves output.
+    Sort by ONE column, save output, and RETURN the sorted workbook so it can be chained.
     """
     bio = BytesIO()
     input_wb.save(bio)  # save workbook to memory
@@ -433,20 +433,20 @@ def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header
                 return dt.date.max if blanks_last else dt.date.min
             return d
 
-        # A→Z (case-insensitive), stable with original as tie-breaker
         s = "" if v is None else str(v).strip()
         if blanks_last and s == "":
-            return ("\uffff",)  # pushes blanks to end
+            return ("\uffff",)
         return (s.casefold(), s)
 
-    # One-key sort only (exactly what you asked)
-    rows_sorted = sorted(rows,
-                         key=key_func)  # Python sorting tools described here
+    rows_sorted = sorted(rows, key=key_func)
 
     _write_snapshot(ws, start, rows_sorted, text_col=col, text_col_is_date=treat_as_date)
 
     if save_name:
         wb.save(os.path.join(OUTPUT_ROOT, save_name))
+
+    return wb
+
 
 
 def _find_header_row_best_match(ws, required_headers: List[str], header_scan_rows: int = 20) -> \
