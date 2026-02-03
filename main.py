@@ -9,7 +9,7 @@ from src.Logging import logger
 
 
 def main():
-    input_xlsx = 'data/input/ZOTCM_0010_0002_11M_11N (2).xlsx'
+    input_xlsx = 'data/input/ZOTCM_0010_0002_11M_11N (3).xlsx'
     df = pd.read_excel(input_xlsx)
 
     os.makedirs(OUTPUT_ROOT, exist_ok=True)
@@ -29,7 +29,7 @@ def main():
 
         logger.info(f"✅ Step 1 done in {time.perf_counter() - ts} seconds.")
     except Exception as e:
-        logger.error(f"Error applying transformation step 'step_01_del_cols': {e}")
+        logger.exception(f"Error applying transformation step 'step_01_del_cols': {e}")
 
     # ==================================== STEP 2 ====================================
     try:
@@ -46,7 +46,7 @@ def main():
 
         logger.info(f"✅ Step 2 done in {time.perf_counter() - ts} seconds.")
     except Exception as e:
-        logger.error(f"Error applying transformation step: {e}")
+        logger.exception(f"Error applying transformation step: {e}")
 
     # ==================================== STEP 3 ====================================
     try:
@@ -59,7 +59,7 @@ def main():
 
         logger.info(f"✅ Step 3 done in {time.perf_counter() - ts} seconds.")
     except Exception as e:
-        logger.error(f"Error applying transformation step: {e}")
+        logger.exception(f"Error applying transformation step: {e}")
 
     # ==================================== STEP 4 ====================================
     try:
@@ -76,7 +76,7 @@ def main():
 
         logger.info(f"✅ Step 4 done in {time.perf_counter() - ts} seconds.")
     except Exception as e:
-        logger.error(f"Error applying transformation step 'step_04': {e}")
+        logger.exception(f"Error applying transformation step 'step_04': {e}")
 
 
 if __name__ == "__main__":
