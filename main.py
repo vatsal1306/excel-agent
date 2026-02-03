@@ -66,7 +66,7 @@ def main():
         logger.info(break_template.replace("X", "STEP 4"))
         ts = time.perf_counter()
 
-        T.step_04_create_distribution_tabs(
+        wb = T.step_04_create_distribution_tabs(
             wb,
             source_sheet_name=None,
             header_scan_rows=20,
@@ -77,6 +77,21 @@ def main():
         logger.info(f"✅ Step 4 done in {time.perf_counter() - ts} seconds.")
     except Exception as e:
         logger.exception(f"Error applying transformation step 'step_04': {e}")
+
+    # ==================================== STEP 5 ====================================
+    try:
+        logger.info(break_template.replace("X", "STEP 5"))
+        ts = time.perf_counter()
+        wb = T.step_05_create_orders_on_hold_tabs(
+            wb,
+            source_sheet_name="Sheet1",
+            header_scan_rows=20,
+            save=True,
+            save_name="step5_orders_on_hold.xlsx",
+        )
+        logger.info(f"✅ Step 5 done in {time.perf_counter() - ts} seconds.")
+    except Exception as e:
+        logger.error(f"Error applying transformation step: {e}")
 
 
 if __name__ == "__main__":

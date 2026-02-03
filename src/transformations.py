@@ -1007,3 +1007,181 @@ def step_04_create_distribution_tabs(
         wb.save(out_path)
 
     return wb
+
+
+def step_05_create_orders_on_hold_tabs(
+        wb: Workbook,
+        *,
+        source_sheet_name: str = "Sheet1",
+        header_scan_rows: int = 20,
+        save: bool = False,
+        save_name: str = "step5_orders_on_hold.xlsx",
+) -> Workbook:
+    """
+    STEP 5 (Orders on Hold)
+    Input: Step 4 output workbook
+    Base sheet: Sheet1
+
+    Creates 2 tabs:
+      - orders on hold - abc  (East+West separated by red horizontal line)
+      - orders on hold - qxo  (East+West separated by red horizontal line)
+
+    Rules:
+      - Filter by "Name of sold-to party" using the fixed mappings:
+          ABC East = "ABC SUPPLY #402"
+          ABC West = "ABC SUPPLY CO INC #015"
+          QXO East = "BEACON BUILDING PRODUCTS 285"
+          QXO West = "BEACON BUILDING PRODUCTS 228"
+      - Keep only rows where "Delivery block description" is NOT blank
+      - Sort within each region (East/West) by "Name of ship-to party"
+      - Insert blank white row between each job (ship-to party)
+      - Insert a red horizontal separator row between East and West
+      - Highlight "Delivery block description" column yellow in output tabs
+      - If sheet exists already, delete & recreate
+    """
+    if source_sheet_name not in wb.sheetnames:
+        raise ValueError(f"Source sheet '{source_sheet_name}' not found in workbook. sheets={wb.sheetnames}")
+
+    ws = wb[source_sheet_name]
+
+    required = ["Name of sold-to party", "Name of ship-to party", "Delivery block description"]
+    header_row, col_map = _find_header_row_best_match(ws, required, header_scan_rows=header_scan_rows)
+
+    sold_to_col = col_map["Name of sold-to party"]
+    ship_to_col = col_map["Name of ship-to party"]
+    del_block_col = col_map["Delivery block description"]
+
+    # Snapshot headers (current sheet order)
+    headers: List[str] = []
+    for c in range(1, ws.max_column + 1):
+        headers.append("" if ws.cell(header_row, c).value is None else str(ws.cell(header_row, c).value))
+
+    # Column widths from source
+    src_col_widths: Dict[int, Optional[float]] = {}
+    for c in range(1, ws.max_column + 1):
+        letter = get_column_letter(c)
+        src_col_widths[c] = ws.column_dimensions[letter].width
+
+    # Snapshot row cells for speed (all columns)
+    data_rows = list(range(header_row + 1, ws.max_row + 1))
+    row_snaps: Dict[int, List] = {}
+    for i, r in enumerate(data_rows, start=1):
+        row_snaps[r] = [ws.cell(r, c) for c in range(1, ws.max_column + 1)]
+        if i % 5000 == 0 or i == len(data_rows):
+            logger.info(f"snapshotted {i}/{len(data_rows)} rows.")
+
+    yellow_fill = PatternFill(patternType="solid", fgColor="FFFF00")
+
+    red_fill = PatternFill(patternType="solid", fgColor="FF0000")
+
+    def _is_blank(v) -> bool:
+        return _norm(v) == ""
+
+    def _red_separator_row(dws: Worksheet, r: int):
+        # draw a solid red bar across the whole row (all columns) using fill
+        for c in range(1, ws.max_column + 1):
+            cell = dws.cell(r, c)
+            cell.value = None
+            cell.fill = red_fill
+
+    def _write_orders_tab(sheet_title: str, east_sold_to: str, west_sold_to: str) -> None:
+        # delete & recreate if exists
+        if sheet_title in wb.sheetnames:
+            logger.warning(f"Sheet '{sheet_title}' already exists; deleting and recreating it.")
+            del wb[sheet_title]
+
+        dws = wb.create_sheet(sheet_title)
+
+        # widths
+        for c in range(1, ws.max_column + 1):
+            w = src_col_widths.get(c)
+            if w is not None:
+                dws.column_dimensions[get_column_letter(c)].width = w
+
+        # header row copy (value + style)
+        for c in range(1, ws.max_column + 1):
+            _copy_cell(ws.cell(header_row, c), dws.cell(1, c))
+
+        dws.freeze_panes = "A2"
+
+        east_norm = _norm(east_sold_to)
+        west_norm = _norm(west_sold_to)
+
+        east_rows: List[int] = []
+        west_rows: List[int] = []
+
+        # filter rows by sold-to AND delivery block desc non-blank
+        for r in data_rows:
+            sold_norm = _norm(ws.cell(r, sold_to_col).value)
+            if sold_norm not in (east_norm, west_norm):
+                continue
+
+            if _is_blank(ws.cell(r, del_block_col).value):
+                continue
+
+            if sold_norm == east_norm:
+                east_rows.append(r)
+            else:
+                west_rows.append(r)
+
+        logger.info(f"'{sheet_title}' rows after filter: east={len(east_rows)}, west={len(west_rows)}")
+
+        def ship_key(rr: int) -> str:
+            v = ws.cell(rr, ship_to_col).value
+            return ("" if v is None else str(v).strip()).casefold()
+
+        east_rows.sort(key=ship_key)
+        west_rows.sort(key=ship_key)
+
+        out_r = 2  # start after header
+
+        def _write_group(rows_list: List[int]):
+            nonlocal out_r
+            prev_ship = None
+
+            for rr in rows_list:
+                ship = "" if ws.cell(rr, ship_to_col).value is None else str(ws.cell(rr, ship_to_col).value).strip()
+
+                # blank row between each job (ship-to party)
+                if prev_ship is not None and ship.casefold() != prev_ship.casefold():
+                    out_r += 1  # blank white row
+
+                out_r += 1
+                for c, src_cell in enumerate(row_snaps[rr], start=1):
+                    _copy_cell(src_cell, dws.cell(out_r, c))
+
+                # highlight delivery block description column yellow
+                dws.cell(out_r, del_block_col).fill = yellow_fill
+
+                prev_ship = ship
+
+        # Write East then West, separated by red line row (only if both exist)
+        if east_rows:
+            _write_group(east_rows)
+
+        if east_rows and west_rows:
+            out_r += 1  # blank row ABOVE red bar
+            out_r += 1
+            _red_separator_row(dws, out_r)  # red bar row
+            out_r += 1  # blank row BELOW red bar
+
+        if west_rows:
+            _write_group(west_rows)
+
+    # Create the two required tabs
+    _write_orders_tab(
+        "Orders on Hold - ABC (East & West)",
+        east_sold_to="ABC SUPPLY #402",
+        west_sold_to="ABC SUPPLY CO INC #015",
+    )
+    _write_orders_tab(
+        "Orders on Hold - QXO (East & West)",
+        east_sold_to="BEACON BUILDING PRODUCTS 285",
+        west_sold_to="BEACON BUILDING PRODUCTS 228",
+    )
+
+    if save:
+        out_path = os.path.join(OUTPUT_ROOT, save_name)
+        wb.save(out_path)
+
+    return wb
