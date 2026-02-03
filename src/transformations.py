@@ -9,7 +9,7 @@ from typing import Optional, Tuple, Union, List, Dict
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
 from openpyxl.workbook.workbook import Workbook
@@ -43,7 +43,7 @@ def step_01(df: pd.DataFrame, save: bool = False) -> pd.DataFrame:
 
         # Case 1: already a pandas datetime dtype
         if is_datetime64_any_dtype(s):
-            df[date_col] = s.dt.strftime("%d/%m/%Y")  # :contentReference[oaicite:3]{index=3}
+            df[date_col] = s.dt.strftime("%m/%d/%Y")
         else:
             # Case 2: mixed/object column – normalize any datetime-like objects
             def _fmt_one(x):
@@ -53,19 +53,19 @@ def step_01(df: pd.DataFrame, save: bool = False) -> pd.DataFrame:
                     x = x.to_pydatetime()
                 if isinstance(x, datetime.datetime):
                     d = x.date()
-                    return f"{d.day:02d}/{d.month:02d}/{d.year}"
+                    return f"{d.month:02d}/{d.day:02d}/{d.year}"
                 if isinstance(x, datetime.date):
-                    return f"{x.day:02d}/{x.month:02d}/{x.year}"
+                    return f"{x.month:02d}/{x.day:02d}/{x.year}"
 
                 # Case 3: strings like "2025-03-26 00:00:00" or other parseable variants
                 if isinstance(x, str):
                     t = x.strip()
                     if t == "":
                         return ""
-                    parsed = pd.to_datetime(t, dayfirst=True, errors="coerce")  # :contentReference[oaicite:4]{index=4}
+                    parsed = pd.to_datetime(t, dayfirst=True, errors="coerce")
                     if pd.notna(parsed):
                         d = parsed.date()
-                        return f"{d.day:02d}/{d.month:02d}/{d.year}"
+                        return f"{d.month:02d}/{d.day:02d}/{d.year}"
                     return t  # leave non-date strings as-is
 
                 # fallback: stringify
@@ -116,18 +116,18 @@ def _to_float(v):
     return None
 
 
-def _excel_date_to_ddmmyyyy_string(v) -> str:
+def _excel_date_to_mmddyyyy_string(v) -> str:
     """
-    Convert various Excel/openpyxl date representations to 'DD/MM/YYYY' string.
+    Convert various Excel/openpyxl date representations to 'MM/DD/YYYY' string.
     Keeps non-date strings as-is (stringified).
     """
     if v is None:
         return ""
     if isinstance(v, datetime.datetime):
         d = v.date()
-        return f"{d.day:02d}/{d.month:02d}/{d.year}"
+        return f"{d.month:02d}/{d.day:02d}/{d.year}"
     if isinstance(v, datetime.date):
-        return f"{v.day:02d}/{v.month:02d}/{v.year}"
+        return f"{v.month:02d}/{v.day:02d}/{v.year}"
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
             if isinstance(v, float) and math.isnan(v):
@@ -135,11 +135,11 @@ def _excel_date_to_ddmmyyyy_string(v) -> str:
         except Exception:
             pass
         try:
-            d = from_excel(v)  # openpyxl helper for Excel serial dates :contentReference[oaicite:1]{index=1}
+            d = from_excel(v)
             if isinstance(d, datetime.datetime):
                 d = d.date()
             if isinstance(d, datetime.date):
-                return f"{d.day:02d}/{d.month:02d}/{d.year}"
+                return f"{d.month:02d}/{d.day:02d}/{d.year}"
         except Exception:
             pass
     return str(v)
@@ -223,7 +223,7 @@ def step_02(
     else:
         for r in range(header_row + 1, ws.max_row + 1):
             cell = ws.cell(r, date_col)
-            cell.value = _excel_date_to_ddmmyyyy_string(cell.value)
+            cell.value = _excel_date_to_mmddyyyy_string(cell.value)
             cell.number_format = "@"  # force text display :contentReference[oaicite:2]{index=2}
 
     # ---- Reset hidden rows so script is idempotent ----
@@ -290,7 +290,9 @@ def step_02(
 
 
 def _parse_date(v) -> Optional[dt.date]:
-    """Parse many Excel-ish date representations into dt.date (for sorting only)."""
+    """Parse many Excel-ish date representations into dt.date (for sorting only).
+    Accepts DD/MM/YYYY and MM/DD/YYYY; if ambiguous, assumes DD/MM/YYYY.
+    """
     if v is None or v == "":
         return None
 
@@ -317,14 +319,40 @@ def _parse_date(v) -> Optional[dt.date]:
         if not s:
             return None
 
-        # Prefer DD/MM/YYYY and common variants
-        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d", "%Y/%m/%d"):
+        # Strip common time suffix if present (prevents timestamp issues affecting parsing)
+        # e.g. "2026-02-04 00:00:00" -> "2026-02-04"
+        s = re.split(r"\s+", s, maxsplit=1)[0]
+
+        # Handle slash dates with ambiguity rules
+        m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$", s)
+        if m:
+            a = int(m.group(1))
+            b = int(m.group(2))
+            y = int(m.group(3))
+
+            # If a > 12 -> must be DD/MM/YYYY
+            if a > 12:
+                d, mo = a, b
+            # If b > 12 -> must be MM/DD/YYYY
+            elif b > 12:
+                mo, d = a, b
+            # Ambiguous -> default DD/MM/YYYY (per your requirement)
+            else:
+                d, mo = a, b
+
+            try:
+                return dt.date(y, mo, d)
+            except Exception:
+                return None
+
+        # Non-slash known formats
+        for fmt in ("%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d", "%Y/%m/%d"):
             try:
                 return dt.datetime.strptime(s, fmt).date()
             except Exception:
                 pass
 
-        # Optional: if python-dateutil is installed, this catches odd strings
+        # Fallback: try dateutil if available (dayfirst=True to match your default)
         try:
             from dateutil import parser
             return parser.parse(s, dayfirst=True, fuzzy=True).date()
@@ -334,9 +362,8 @@ def _parse_date(v) -> Optional[dt.date]:
     return None
 
 
-def _date_to_d_mmyyyy(d: dt.date) -> str:
-    # D/MM/YYYY (day no leading zero; month 2 digits)
-    return f"{d.day}/{d.month:02d}/{d.year}"
+def _date_to_mmddyyyy(d: dt.date) -> str:
+    return f"{d.month:02d}/{d.day:02d}/{d.year}"
 
 
 def _find_header_and_col(ws, header_text: str, header_scan_rows: int = 20) -> Tuple[int, int]:
@@ -373,7 +400,16 @@ def _snapshot_rows(ws, start_row: int, end_row: int):
     return snap
 
 
-def _write_snapshot(ws, start_row: int, snap, text_col: Optional[int] = None, text_col_is_date=False):
+def _write_snapshot(
+        ws,
+        start_row: int,
+        snap,
+        text_col: Optional[int] = None,
+        text_col_is_date: bool = False,
+        *,
+        date_dayfirst: bool = True,
+        date_year_len: int = 4,
+):
     """Write rows back in new order; optionally force one column to TEXT strings."""
     max_col = ws.max_column
     for i, row in enumerate(snap):
@@ -397,14 +433,152 @@ def _write_snapshot(ws, start_row: int, snap, text_col: Optional[int] = None, te
         if text_col is not None:
             dc = ws.cell(tr, text_col)
             if text_col_is_date:
-                d = _parse_date(dc.value)
+                d = _parse_slash_date_with_format(dc.value, dayfirst=date_dayfirst)
                 if d is None:
                     dc.value = "" if dc.value is None else str(dc.value)
                 else:
-                    dc.value = _date_to_d_mmyyyy(d)  # store as string
+                    # Always output as MM/DD/(YY|YYYY) text (no timestamp)
+                    dc.value = _format_mmdd(d, year_len=date_year_len)
             else:
                 dc.value = "" if dc.value is None else str(dc.value)
-            dc.number_format = "@"  # Excel TEXT format :contentReference[oaicite:2]{index=2}
+
+            dc.number_format = "@"  # Excel TEXT format
+
+
+def _detect_gi_slash_format(values: list) -> tuple[bool, int]:
+    """
+    Detect overall slash-date format for the whole column in this run.
+
+    Returns:
+        (dayfirst, year_len)
+        - dayfirst=True  => DD/MM/(YY|YYYY)
+        - dayfirst=False => MM/DD/(YY|YYYY)
+        - year_len is 2 or 4 (based on matched samples; defaults to 2 if only YY seen, else 4)
+    Detection rule (as you asked):
+        - If we see any sample where first token > 12 => DD/MM
+        - If we see any sample where second token > 12 => MM/DD
+        - If ambiguous across all samples => default DD/MM
+    """
+    ddmm_votes = 0
+    mmdd_votes = 0
+    year2 = 0
+    year4 = 0
+
+    for v in values:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+
+        # Strip time part if present
+        s = re.split(r"\s+", s, maxsplit=1)[0]
+
+        m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})$", s)
+        if not m:
+            continue
+
+        a = int(m.group(1))
+        b = int(m.group(2))
+        y = m.group(3)
+
+        if len(y) == 2:
+            year2 += 1
+        else:
+            year4 += 1
+
+        if a > 12:
+            ddmm_votes += 1
+        elif b > 12:
+            mmdd_votes += 1
+        # else ambiguous -> no vote
+
+    # Decide format
+    if mmdd_votes > ddmm_votes:
+        dayfirst = False
+    elif ddmm_votes > mmdd_votes:
+        dayfirst = True
+    else:
+        dayfirst = True  # ambiguous default => DD/MM
+
+    # Decide year length (if any YYYY exists, keep 4; else 2)
+    year_len = 4 if year4 > 0 else 2
+
+    return dayfirst, year_len
+
+
+def _parse_slash_date_with_format(v, *, dayfirst: bool) -> Optional[dt.date]:
+    """
+    Parse a date value into dt.date using a *known* dayfirst decision for this run.
+    Supports DD/MM/YY, MM/DD/YY, DD/MM/YYYY, MM/DD/YYYY.
+    """
+    if v is None or v == "":
+        return None
+
+    if isinstance(v, dt.datetime):
+        return v.date()
+    if isinstance(v, dt.date):
+        return v
+
+    # Excel serial numbers
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        try:
+            if isinstance(v, float) and math.isnan(v):
+                return None
+        except Exception:
+            pass
+        try:
+            d = from_excel(v)
+            return d.date() if isinstance(d, dt.datetime) else d
+        except Exception:
+            return None
+
+    s = str(v).strip()
+    if not s:
+        return None
+
+    # Strip time part if present
+    s = re.split(r"\s+", s, maxsplit=1)[0]
+
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})$", s)
+    if not m:
+        # fallback: try a couple safe formats (optional)
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y", "%d.%m.%Y"):
+            try:
+                return dt.datetime.strptime(s, fmt).date()
+            except Exception:
+                pass
+        return None
+
+    a = int(m.group(1))
+    b = int(m.group(2))
+    y_raw = m.group(3)
+
+    # interpret order based on detected format for this run
+    if dayfirst:
+        d, mo = a, b
+    else:
+        mo, d = a, b
+
+    # Year: support YY and YYYY
+    if len(y_raw) == 2:
+        yy = int(y_raw)
+        # Pivot rule: 00-79 => 2000-2079; 80-99 => 1980-1999
+        y = 2000 + yy if yy <= 79 else 1900 + yy
+    else:
+        y = int(y_raw)
+
+    try:
+        return dt.date(y, mo, d)
+    except Exception:
+        return None
+
+
+def _format_mmdd(d: dt.date, *, year_len: int) -> str:
+    """Format as MM/DD/YY or MM/DD/YYYY."""
+    if year_len == 2:
+        return f"{d.month:02d}/{d.day:02d}/{d.year % 100:02d}"
+    return f"{d.month:02d}/{d.day:02d}/{d.year}"
 
 
 def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header_scan_rows: int = 20,
@@ -424,11 +598,22 @@ def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header
 
     rows = _snapshot_rows(ws, start, end)
 
+    # --- NEW: detect the input format for this whole run (only when sorting dates) ---
+    date_dayfirst = True
+    date_year_len = 4
+    if treat_as_date:
+        col_values = [r["cells"][col - 1]["value"] for r in rows]
+        date_dayfirst, date_year_len = _detect_gi_slash_format(col_values)
+        logger.info(
+            f"Step 3 date scan: detected {'DD/MM' if date_dayfirst else 'MM/DD'} "
+            f"with year_len={date_year_len}"
+        )
+
     def key_func(row):
         v = row["cells"][col - 1]["value"]
 
         if treat_as_date:
-            d = _parse_date(v)
+            d = _parse_slash_date_with_format(v, dayfirst=date_dayfirst)
             if d is None:
                 return dt.date.max if blanks_last else dt.date.min
             return d
@@ -440,13 +625,20 @@ def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header
 
     rows_sorted = sorted(rows, key=key_func)
 
-    _write_snapshot(ws, start, rows_sorted, text_col=col, text_col_is_date=treat_as_date)
+    _write_snapshot(
+        ws,
+        start,
+        rows_sorted,
+        text_col=col,
+        text_col_is_date=treat_as_date,
+        date_dayfirst=date_dayfirst,
+        date_year_len=date_year_len,
+    )
 
     if save_name:
         wb.save(os.path.join(OUTPUT_ROOT, save_name))
 
     return wb
-
 
 
 def _find_header_row_best_match(ws, required_headers: List[str], header_scan_rows: int = 20) -> \
