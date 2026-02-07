@@ -9,7 +9,7 @@ from typing import Optional, Tuple, Union, List, Dict
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
 from openpyxl.workbook.workbook import Workbook
@@ -785,11 +785,13 @@ def step_04_create_distribution_tabs(
     STEP 4
     - Use ONLY visible rows from Step 2 (then permanently delete hidden rows/cols).
     - Create distribution tabs by 'Name of sold-to party' (sold-to).
-    - Within each tab, group by 'Name of ship-to party', sorted A→Z.
-      For each contractor group:
+    - Within each tab, group and separate records.
+      * Distribution tabs: group by 'Name of ship-to party', sorted A→Z.
+      * Direct tabs (Bloom – Direct, Christen Detroit – Direct): group by 'Name 2' (job), sorted A→Z.
+      For each group:
         - Add two blank rows ABOVE (even before first group)
         - On the lower blank row, merge+center and yellow highlight across
-          columns ('Name of ship-to party' .. 'Name 2'), and write contractor name.
+          columns ('Name of ship-to party' .. 'Name 2'), and write group label.
     - If a mapped tab has no rows, do not create the sheet.
     """
 
@@ -879,12 +881,14 @@ def step_04_create_distribution_tabs(
 
     unmapped = {k: v for k, v in observed_sold_to.items() if k and k not in distributor_map_norm}
     if unmapped:
-        # Only log top few to avoid noise; still flag it.
         sample = list(unmapped.items())[:8]
         logger.warning(
             "⚠️Found sold-to values in data that are NOT in distributor_map. "
             f"These rows will NOT be written to any distribution sheet. sample={sample}"
         )
+
+    # Direct tabs should group by job name (Name 2) instead of ship-to
+    direct_tabs = {"Bloom – Direct", "Christen Detroit – Direct"}
 
     # Create each distributor sheet
     logger.info("Creating distribution tabs...")
@@ -926,22 +930,27 @@ def step_04_create_distribution_tabs(
 
         dws.freeze_panes = "A2"
 
-        # Group by contractor (Name of ship-to party), sorted A→Z
+        use_name2_grouping = sheet_title in direct_tabs
+
+        # Group:
+        # - Distribution tabs => ship-to party
+        # - Direct tabs => Name 2 (job)
         groups: Dict[str, List[int]] = {}
         for r in matching_rows:
-            name_val = ws.cell(r, ship_name_col).value
-            contractor = "" if name_val is None else str(name_val).strip()
-            groups.setdefault(contractor, []).append(r)
+            key_val = ws.cell(r, name2_col).value if use_name2_grouping else ws.cell(r, ship_name_col).value
+            group_key = "" if key_val is None else str(key_val).strip()
+            groups.setdefault(group_key, []).append(r)
 
         if "" in groups:
             logger.warning(
-                f"⚠️Distributor '{sheet_title}' has {len(groups[''])} row(s) with blank contractor name. "
+                f"⚠️Distributor '{sheet_title}' has {len(groups[''])} row(s) with blank "
+                f"{'Name 2' if use_name2_grouping else 'contractor name (ship-to)'}; "
                 "These will be grouped under an empty header (still included)."
             )
 
-        contractors_sorted = sorted(groups.keys(), key=lambda x: x.casefold())
+        group_keys_sorted = sorted(groups.keys(), key=lambda x: x.casefold())
 
-        # Style for contractor merged header row
+        # Style for merged header row
         yellow_fill = PatternFill(patternType="solid", fgColor="FFFF00")
         center = Alignment(horizontal="center", vertical="center")
         bold = Font(bold=True)
@@ -951,15 +960,15 @@ def step_04_create_distribution_tabs(
         end_col = max(ship_name_col, name2_col)
 
         # Progress inside distributor
-        for g_idx, contractor in enumerate(contractors_sorted, start=1):
-            if g_idx == 1 or g_idx % 25 == 0 or g_idx == len(contractors_sorted):
+        for g_idx, group_key in enumerate(group_keys_sorted, start=1):
+            if g_idx == 1 or g_idx % 25 == 0 or g_idx == len(group_keys_sorted):
                 logger.info(
-                    f"Distributor '{sheet_title}' writing contractor {g_idx}/{len(contractors_sorted)}: "
-                    f"'{contractor[:60] + ('…' if len(contractor) > 60 else '')}' "
-                    f"(rows={len(groups[contractor])})."
+                    f"Distributor '{sheet_title}' writing group {g_idx}/{len(group_keys_sorted)}: "
+                    f"'{group_key[:60] + ('…' if len(group_key) > 60 else '')}' "
+                    f"(rows={len(groups[group_key])})."
                 )
 
-            # Two blank lines ABOVE each contractor (even before first group)
+            # Two blank lines ABOVE each group (even before first group)
             out_r += 1  # upper blank row
             out_r += 1  # lower blank row = merged/highlighted header
 
@@ -973,12 +982,12 @@ def step_04_create_distribution_tabs(
                 )
             except Exception as e:
                 logger.warning(
-                    f"⚠️Merge failed for distributor '{sheet_title}', contractor '{contractor}' "
+                    f"⚠️Merge failed for distributor '{sheet_title}', group '{group_key}' "
                     f"at row={out_r}, cols={start_col}..{end_col}: {e}"
                 )
 
             mcell = dws.cell(out_r, start_col)
-            mcell.value = contractor
+            mcell.value = group_key
             mcell.fill = yellow_fill
             mcell.alignment = center
             mcell.font = bold
@@ -990,8 +999,8 @@ def step_04_create_distribution_tabs(
                 cell.alignment = center
                 cell.font = bold
 
-            # Write contractor rows
-            for src_r in groups[contractor]:
+            # Write grouped rows
+            for src_r in groups[group_key]:
                 out_r += 1
                 src_cells = row_snaps[src_r]
                 for c, src_cell in enumerate(src_cells, start=1):
@@ -1033,8 +1042,8 @@ def step_05_create_orders_on_hold_tabs(
           QXO East = "BEACON BUILDING PRODUCTS 285"
           QXO West = "BEACON BUILDING PRODUCTS 228"
       - Keep only rows where "Delivery block description" is NOT blank
-      - Sort within each region (East/West) by "Name of ship-to party"
-      - Insert blank white row between each job (ship-to party)
+      - Sort within each region (East/West) by "Name 2"
+      - Insert blank white row between each job (Name 2)
       - Insert a red horizontal separator row between East and West
       - Highlight "Delivery block description" column yellow in output tabs
       - If sheet exists already, delete & recreate
@@ -1044,11 +1053,13 @@ def step_05_create_orders_on_hold_tabs(
 
     ws = wb[source_sheet_name]
 
-    required = ["Name of sold-to party", "Name of ship-to party", "Delivery block description"]
+    # Added "Name 2" so we can sort/separate by it
+    required = ["Name of sold-to party", "Name of ship-to party", "Name 2", "Delivery block description"]
     header_row, col_map = _find_header_row_best_match(ws, required, header_scan_rows=header_scan_rows)
 
     sold_to_col = col_map["Name of sold-to party"]
     ship_to_col = col_map["Name of ship-to party"]
+    name2_col = col_map["Name 2"]
     del_block_col = col_map["Delivery block description"]
 
     # Snapshot headers (current sheet order)
@@ -1071,7 +1082,6 @@ def step_05_create_orders_on_hold_tabs(
             logger.info(f"snapshotted {i}/{len(data_rows)} rows.")
 
     yellow_fill = PatternFill(patternType="solid", fgColor="FFFF00")
-
     red_fill = PatternFill(patternType="solid", fgColor="FF0000")
 
     def _is_blank(v) -> bool:
@@ -1126,24 +1136,25 @@ def step_05_create_orders_on_hold_tabs(
 
         logger.info(f"'{sheet_title}' rows after filter: east={len(east_rows)}, west={len(west_rows)}")
 
-        def ship_key(rr: int) -> str:
-            v = ws.cell(rr, ship_to_col).value
+        # Sort within each region by Name 2
+        def job_key(rr: int) -> str:
+            v = ws.cell(rr, name2_col).value
             return ("" if v is None else str(v).strip()).casefold()
 
-        east_rows.sort(key=ship_key)
-        west_rows.sort(key=ship_key)
+        east_rows.sort(key=job_key)
+        west_rows.sort(key=job_key)
 
         out_r = 2  # start after header
 
         def _write_group(rows_list: List[int]):
             nonlocal out_r
-            prev_ship = None
+            prev_job = None
 
             for rr in rows_list:
-                ship = "" if ws.cell(rr, ship_to_col).value is None else str(ws.cell(rr, ship_to_col).value).strip()
+                job = "" if ws.cell(rr, name2_col).value is None else str(ws.cell(rr, name2_col).value).strip()
 
-                # blank row between each job (ship-to party)
-                if prev_ship is not None and ship.casefold() != prev_ship.casefold():
+                # blank row between each job (Name 2)
+                if prev_job is not None and job.casefold() != prev_job.casefold():
                     out_r += 1  # blank white row
 
                 out_r += 1
@@ -1153,7 +1164,7 @@ def step_05_create_orders_on_hold_tabs(
                 # highlight delivery block description column yellow
                 dws.cell(out_r, del_block_col).fill = yellow_fill
 
-                prev_ship = ship
+                prev_job = job
 
         # Write East then West, separated by red line row (only if both exist)
         if east_rows:
