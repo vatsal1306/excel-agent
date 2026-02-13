@@ -93,6 +93,23 @@ def main():
     except Exception as e:
         logger.error(f"Error applying transformation step: {e}")
 
+    # ==================================== STEP 6 ====================================
+    try:
+        logger.info(break_template.replace("X", "STEP 6"))
+        ts = time.perf_counter()
+
+        wb = T.step_06_create_contractor_tabs(
+            wb,
+            min_lines=4,  # client default is 4
+            header_scan_rows=20,
+            save=True,
+            save_name="step6_contractor_tabs.xlsx",
+        )
+
+        logger.info(f"✅ Step 6 done in {time.perf_counter() - ts} seconds.")
+    except Exception as e:
+        logger.exception(f"Error applying transformation step 'step_06': {e}")
+
 
 if __name__ == "__main__":
     main()
