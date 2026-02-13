@@ -936,16 +936,35 @@ def step_04_create_distribution_tabs(
         # - Distribution tabs => ship-to party
         # - Direct tabs => Name 2 (job)
         groups: Dict[str, List[int]] = {}
+        name2_fallback_used = 0
         for r in matching_rows:
-            key_val = ws.cell(r, name2_col).value if use_name2_grouping else ws.cell(r, ship_name_col).value
+            if use_name2_grouping:
+                name2_val = ws.cell(r, name2_col).value
+
+                # If Name 2 is blank, group under ship-to so the yellow header isn't empty
+                if _norm(name2_val) != "":
+                    key_val = name2_val
+                else:
+                    key_val = ws.cell(r, ship_name_col).value
+                    name2_fallback_used += 1
+            else:
+                key_val = ws.cell(r, ship_name_col).value
+
             group_key = "" if key_val is None else str(key_val).strip()
             groups.setdefault(group_key, []).append(r)
 
+        if use_name2_grouping and name2_fallback_used:
+            logger.info(
+                f"Distributor '{sheet_title}': Name 2 blank in {name2_fallback_used} row(s); "
+                "used 'Name of ship-to party' as the group/yellow header label."
+            )
+
+        # If still blank, it means both Name 2 and ship-to are blank
         if "" in groups:
             logger.warning(
-                f"⚠️Distributor '{sheet_title}' has {len(groups[''])} row(s) with blank "
-                f"{'Name 2' if use_name2_grouping else 'contractor name (ship-to)'}; "
-                "These will be grouped under an empty header (still included)."
+                f"⚠️Distributor '{sheet_title}' has {len(groups[''])} row(s) where "
+                f"{'Name 2' if use_name2_grouping else 'Name of ship-to party'} is blank "
+                "and the fallback label is also blank; yellow header will remain empty for these rows."
             )
 
         group_keys_sorted = sorted(groups.keys(), key=lambda x: x.casefold())
@@ -1381,12 +1400,6 @@ def step_06_create_contractor_tabs(
             # Create sheet title (allow long titles; ensure uniqueness; sanitize invalid chars)
             desired_title = f"{contractor} - {sheet_name}"
             dest_title = _unique_sheet_name_any_len(wb, desired_title)
-
-            if len(dest_title) > 31:
-                logger.warning(
-                    f"⚠️contractor tab name >31 chars: '{dest_title}'. "
-                    "Excel UI normally restricts this; some apps may warn/repair."
-                )
 
             # If rerun and same name exists, delete+recreate to be idempotent
             if dest_title in wb.sheetnames:
