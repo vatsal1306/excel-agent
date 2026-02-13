@@ -17,7 +17,7 @@ def main():
     logger.info("Excel file loaded successfully.")
     logger.info(f"Initial columns: {list(df.columns)}")
 
-    break_template = f"{'-' * 20} X {'-' * 20}"
+    break_template = f"{'-' * 30} X {'-' * 30}"
 
     # Apply transformation steps
     # ==================================== STEP 1 ====================================
