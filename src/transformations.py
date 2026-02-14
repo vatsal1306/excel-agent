@@ -1471,8 +1471,23 @@ def step_06_create_contractor_tabs(
                         f"⚠️merge failed in '{dest_title}' for job '{job}' at row={out_r}, cols=G:H. err={e}"
                     )
 
+                # If Name 2 (job) is blank, use Name of ship-to party for the yellow header label
+                header_label = job
+                if _norm(header_label) == "":
+                    first_row = jobs[job][0]  # any row in this group
+                    ship_to_val = src_ws.cell(first_row, ship_to_col).value
+                    header_label = "" if ship_to_val is None else str(ship_to_val).strip()
+
+                    # final fallback: should normally never happen because this tab is for this contractor
+                    if _norm(header_label) == "":
+                        header_label = contractor
+                        logger.warning(
+                            f"⚠️'{dest_title}' job header fallback: both Name 2 and ship-to are blank; "
+                            f"used contractor='{contractor}'."
+                        )
+
                 mcell = dws.cell(out_r, 7)
-                mcell.value = job
+                mcell.value = header_label
                 mcell.fill = yellow_fill
                 mcell.alignment = center
                 mcell.font = bold
