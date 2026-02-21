@@ -1255,7 +1255,8 @@ def step_06_create_contractor_tabs(
     """
     STEP 6 — OPEN ORDER REPORTS - CONTRACTORS
 
-    Create new contractor tabs from the "distribution/direct" tabs (ignore Orders on Hold tabs).
+    Create contractor tabs only for distribution cases (sold-to != ship-to).
+    Do NOT create contractor tabs from direct partner tabs where sold-to == ship-to.
 
     Rule to create tabs:
       - For each contractor, if they have >= min_lines in ANY one partner tab, they are "eligible".
@@ -1298,11 +1299,11 @@ def step_06_create_contractor_tabs(
 
     skipped_sheets = 0
 
+    # --- Read and count rows per contractor, skip direct-only rows ---
     for sheet_name in source_sheets:
         ws = wb[sheet_name]
 
-        # We need ship-to + name2 to count and later group
-        required = ["Name of ship-to party", "Name 2"]
+        required = ["Name of sold-to party", "Name of ship-to party", "Name 2"]
         try:
             header_row, col_map = _find_header_row_best_match(ws, required, header_scan_rows=header_scan_rows)
         except Exception as e:
@@ -1310,25 +1311,32 @@ def step_06_create_contractor_tabs(
             logger.warning(f"skipping sheet '{sheet_name}' (missing required headers). err={e}")
             continue
 
+        sold_to_col = col_map["Name of sold-to party"]
         ship_to_col = col_map["Name of ship-to party"]
         name2_col = col_map["Name 2"]
 
         sheet_meta[sheet_name] = {
             "header_row": header_row,
+            "sold_to_col": sold_to_col,
             "ship_to_col": ship_to_col,
             "name2_col": name2_col,
         }
 
         data_rows = range(header_row + 1, ws.max_row + 1)
 
-        # We treat "real data" rows as those with Sales Document (col A) populated.
-        # This cleanly ignores the blank separator rows and merged yellow header rows from Step 4.
         for r in data_rows:
+            # ignore blank rows
             if _norm(ws.cell(r, 1).value) == "":
                 continue
 
-            contractor_raw = ws.cell(r, ship_to_col).value
-            contractor = "" if contractor_raw is None else str(contractor_raw).strip()
+            sold_to_norm = _norm(ws.cell(r, sold_to_col).value)
+            ship_to_norm = _norm(ws.cell(r, ship_to_col).value)
+
+            # Skip direct-only rows (where sold-to == ship-to)
+            if sold_to_norm == ship_to_norm:
+                continue
+
+            contractor = ship_to_norm
             if contractor == "":
                 continue
 
@@ -1361,17 +1369,16 @@ def step_06_create_contractor_tabs(
         logger.info("no contractors meet threshold anywhere; no contractor tabs will be created.")
         return wb
 
-    # Style used for job separator header (merged G:H)
+    # Shared styling
     yellow_fill = PatternFill(patternType="solid", fgColor="FFFF00")
     center = Alignment(horizontal="center", vertical="center")
     bold = Font(bold=True)
 
-    # Column delete targets on contractor tabs
+    # Columns to delete on contractor tabs
     delete_targets = {
         _norm("City of Ship-to Party"),
         _norm("Region of Ship-to Party"),
         _norm("Delivery block description"),
-        # allow minor spelling/case variations if they appear
         _norm("City of Ship To"),
         _norm("Region of Ship to"),
         _norm("Delivery Block Description"),
@@ -1379,73 +1386,63 @@ def step_06_create_contractor_tabs(
 
     created_tabs = 0
 
-    # Create contractor tabs per (contractor × partner sheet) where contractor has >0 rows,
-    # but only if contractor is eligible globally (big in any partner)
+    # --- Build contractor tabs if eligible ---
     for contractor_idx, contractor in enumerate(eligible_contractors, start=1):
-        # gather all partner sheets where contractor appears
-        partner_sheets = []
-        for (sheet_name, c), n in counts.items():
-            if c == contractor and n > 0:
-                partner_sheets.append((sheet_name, n))
-
-        # Option B: create per partner sheet (and include "exception" automatically because contractor is eligible)
+        # find partner sheets where this contractor appears
+        partner_sheets = [(sn, counts[(sn, contractor)]) for (sn, c) in counts if c == contractor]
         partner_sheets.sort(key=lambda x: x[0].casefold())
 
         logger.info(
-            f"[{contractor_idx}/{len(eligible_contractors)}] contractor='{contractor}' "
-            f"partner_tabs={len(partner_sheets)} total_lines={total_by_contractor.get(contractor, 0)}"
+            f"[{contractor_idx}/{len(eligible_contractors)}] "
+            f"contractor='{contractor}' partner_tabs={len(partner_sheets)}"
         )
 
         for sheet_name, n_lines in partner_sheets:
-            # Create sheet title (allow long titles; ensure uniqueness; sanitize invalid chars)
-            desired_title = f"{contractor} - {sheet_name}"
-            dest_title = _unique_sheet_name_any_len(wb, desired_title)
-
-            # If rerun and same name exists, delete+recreate to be idempotent
-            if dest_title in wb.sheetnames:
-                logger.warning(f"sheet '{dest_title}' already exists; deleting and recreating it.")
-                del wb[dest_title]
-
             src_ws = wb[sheet_name]
             meta = sheet_meta.get(sheet_name)
             if not meta:
-                logger.warning(f"missing sheet_meta for '{sheet_name}', skipping.")
                 continue
 
             header_row = meta["header_row"]
+            sold_to_col = meta["sold_to_col"]
             ship_to_col = meta["ship_to_col"]
             name2_col = meta["name2_col"]
 
+            # collect only distribution rows (sold-to != ship-to)
+            rows_for_contractor = []
+            for r in range(header_row + 1, src_ws.max_row + 1):
+                if _norm(src_ws.cell(r, 1).value) == "":
+                    continue
+
+                sold_to_norm = _norm(src_ws.cell(r, sold_to_col).value)
+                ship_to_norm = _norm(src_ws.cell(r, ship_to_col).value)
+
+                if sold_to_norm == ship_to_norm:
+                    continue
+
+                if ship_to_norm == contractor:
+                    rows_for_contractor.append(r)
+
+            if not rows_for_contractor:
+                continue
+
+            desired_title = f"{contractor} - {sheet_name}"
+            dest_title = _unique_sheet_name_any_len(wb, desired_title)
+
+            if dest_title in wb.sheetnames:
+                del wb[dest_title]
+
             dws = wb.create_sheet(dest_title)
 
-            # Copy column widths from source
+            # copy widths + header
             for c in range(1, src_ws.max_column + 1):
                 letter = get_column_letter(c)
                 dws.column_dimensions[letter].width = src_ws.column_dimensions[letter].width
-
-            # Copy header row (values + styles)
-            for c in range(1, src_ws.max_column + 1):
                 _copy_cell(src_ws.cell(header_row, c), dws.cell(1, c))
 
             dws.freeze_panes = "A2"
 
-            # Collect relevant source rows (real rows only; skip blank separators and merged headers)
-            rows_for_contractor: List[int] = []
-            for r in range(header_row + 1, src_ws.max_row + 1):
-                if _norm(src_ws.cell(r, 1).value) == "":
-                    continue
-                v = src_ws.cell(r, ship_to_col).value
-                ship_to = "" if v is None else str(v).strip()
-                if ship_to == contractor:
-                    rows_for_contractor.append(r)
-
-            if not rows_for_contractor:
-                logger.info(f"'{dest_title}' has 0 rows unexpectedly; skipping.")
-                # remove empty sheet
-                del wb[dest_title]
-                continue
-
-            # Group by job name (Name 2) and sort A→Z
+            # group by job (Name 2)
             jobs: Dict[str, List[int]] = {}
             for r in rows_for_contractor:
                 jv = src_ws.cell(r, name2_col).value
@@ -1453,38 +1450,22 @@ def step_06_create_contractor_tabs(
                 jobs.setdefault(job, []).append(r)
 
             job_keys_sorted = sorted(jobs.keys(), key=lambda x: x.casefold())
+            out_r = 2
 
-            out_r = 2  # start after header
+            for job in job_keys_sorted:
+                out_r += 1
+                out_r += 1  # merged header row
 
-            # Write job groups
-            for j_idx, job in enumerate(job_keys_sorted, start=1):
-                # Two blank lines ABOVE each job
-                out_r += 1  # upper blank
-                out_r += 1  # lower blank (merged header row)
+                dws.merge_cells(start_row=out_r, start_column=7, end_row=out_r, end_column=8)
 
-                # Merge + style columns G and H (7 and 8) on lower blank line, write job name
-                # (In your sheets G=Name of ship-to party, H=Name 2)
-                try:
-                    dws.merge_cells(start_row=out_r, start_column=7, end_row=out_r, end_column=8)
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️merge failed in '{dest_title}' for job '{job}' at row={out_r}, cols=G:H. err={e}"
-                    )
-
-                # If Name 2 (job) is blank, use Name of ship-to party for the yellow header label
                 header_label = job
                 if _norm(header_label) == "":
-                    first_row = jobs[job][0]  # any row in this group
-                    ship_to_val = src_ws.cell(first_row, ship_to_col).value
-                    header_label = "" if ship_to_val is None else str(ship_to_val).strip()
+                    first_row = jobs[job][0]
+                    st_val = src_ws.cell(first_row, ship_to_col).value
+                    header_label = "" if st_val is None else str(st_val).strip()
 
-                    # final fallback: should normally never happen because this tab is for this contractor
                     if _norm(header_label) == "":
                         header_label = contractor
-                        logger.warning(
-                            f"⚠️'{dest_title}' job header fallback: both Name 2 and ship-to are blank; "
-                            f"used contractor='{contractor}'."
-                        )
 
                 mcell = dws.cell(out_r, 7)
                 mcell.value = header_label
@@ -1492,46 +1473,29 @@ def step_06_create_contractor_tabs(
                 mcell.alignment = center
                 mcell.font = bold
 
-                # Apply style to both cells in merged region (G and H)
                 for c in (7, 8):
                     cell = dws.cell(out_r, c)
                     cell.fill = yellow_fill
                     cell.alignment = center
                     cell.font = bold
 
-                # Write job rows
-                for src_r in jobs[job]:
+                for rr in jobs[job]:
                     out_r += 1
                     for c in range(1, src_ws.max_column + 1):
-                        _copy_cell(src_ws.cell(src_r, c), dws.cell(out_r, c))
+                        _copy_cell(src_ws.cell(rr, c), dws.cell(out_r, c))
 
-            # Delete columns from contractor tab (by header names), after writing
-            # We delete in reverse column order so indices don't shift mid-delete
-            cols_to_delete: List[int] = []
+            # delete columns as per instructions
+            cols_to_delete = []
             for c in range(1, dws.max_column + 1):
                 if _norm(dws.cell(1, c).value) in delete_targets:
                     cols_to_delete.append(c)
 
-            if cols_to_delete:
-                for c in sorted(cols_to_delete, reverse=True):
-                    dws.delete_cols(c)
-                logger.info(f"'{dest_title}' deleted columns at indices={sorted(cols_to_delete)}")
-            else:
-                logger.warning(
-                    f"⚠️'{dest_title}' did not find any delete-target columns "
-                    f"(City/Region Ship-to, Delivery block description)."
-                )
+            for c in sorted(cols_to_delete, reverse=True):
+                dws.delete_cols(c)
 
             created_tabs += 1
-            logger.info(
-                f"created contractor tab '{dest_title}' from '{sheet_name}'. "
-                f"rows={len(rows_for_contractor)} jobs={len(job_keys_sorted)}"
-            )
-
-    logger.info(f"completed. contractor_tabs_created={created_tabs}")
 
     if save:
-        out_path = os.path.join(OUTPUT_ROOT, save_name)
-        wb.save(out_path)
+        wb.save(os.path.join(OUTPUT_ROOT, save_name))
 
     return wb
