@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import time
 
@@ -109,6 +110,22 @@ def main():
         logger.info(f"✅ Step 6 done in {time.perf_counter() - ts} seconds.")
     except Exception as e:
         logger.exception(f"Error applying transformation step 'step_06': {e}")
+
+    # ==================================== STEP 7 ====================================
+    try:
+        logger.info(break_template.replace("X", "STEP 7"))
+        ts = time.perf_counter()
+
+        T.step_07_export_tabs_to_pdfs(
+            workbook_path=os.path.join(OUTPUT_ROOT, "step6_contractor_tabs.xlsx"),
+            output_dir=os.path.join(OUTPUT_ROOT, "pdf_exports"),
+            report_date=dt.date.today(),
+            exclude_sheets=["Sheet1"],  # exclude base tab by default
+        )
+
+        logger.info(f"✅ Step 7 done in {time.perf_counter() - ts} seconds.")
+    except Exception as e:
+        logger.exception(f"Error applying transformation step 'step_07': {e}")
 
 
 if __name__ == "__main__":

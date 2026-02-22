@@ -1,18 +1,25 @@
 import datetime
 import datetime as dt
 import math
+import os
 import os.path
 import re
+import shutil
+import subprocess
+import tempfile
 from copy import copy
 from io import BytesIO
-from typing import Optional, Tuple, Union, List, Dict
+from pathlib import Path
+from typing import List, Optional, Sequence, Union
+from typing import Tuple, Dict
 
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
-from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.worksheet import Worksheet
 from pandas.api.types import is_datetime64_any_dtype
 from tqdm.auto import tqdm
@@ -1499,3 +1506,321 @@ def step_06_create_contractor_tabs(
         wb.save(os.path.join(OUTPUT_ROOT, save_name))
 
     return wb
+
+
+def _format_mm_dash_dd(report_date: Optional[Union[str, dt.date, dt.datetime]]) -> str:
+    """
+    Return date string like '7-29' (no leading zeros).
+    Accepts None, date/datetime, 'YYYY-MM-DD', or 'MM/DD/YYYY'.
+    """
+    if report_date is None:
+        d = dt.date.today()
+    elif isinstance(report_date, dt.datetime):
+        d = report_date.date()
+    elif isinstance(report_date, dt.date):
+        d = report_date
+    elif isinstance(report_date, str):
+        s = report_date.strip()
+        try:
+            d = dt.date.fromisoformat(s)
+        except ValueError:
+            m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$", s)
+            if not m:
+                raise ValueError(
+                    "report_date must be date/datetime or 'YYYY-MM-DD' or 'MM/DD/YYYY'."
+                )
+            mm, dd, yyyy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            d = dt.date(yyyy, mm, dd)
+    else:
+        raise TypeError("report_date must be date/datetime/str or None.")
+
+    return f"{d.month}-{d.day}"
+
+
+def _sanitize_filename(name: str) -> str:
+    """
+    Sanitize for macOS/Linux/Windows filenames while preserving en dash '–'.
+    """
+    name = re.sub(r'[<>:"/\\|?*\n\r\t]+', " ", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return name[:180] if len(name) > 180 else name
+
+
+def _titleize_company(name: str) -> str:
+    """
+    Make names readable for filenames while preserving common acronyms.
+    """
+    name = re.sub(r"\s+", " ", str(name or "").strip())
+    if not name:
+        return ""
+
+    acronyms = {"llc", "inc", "co", "ltd", "lp", "plc", "corp"}
+    tokens = re.split(r"(\s+|&|-)", name)
+    out: List[str] = []
+
+    for tok in tokens:
+        if tok.strip() == "":
+            out.append(tok)
+            continue
+        if tok in {"&", "-"}:
+            out.append(tok)
+            continue
+
+        low = tok.lower()
+        if low in acronyms:
+            out.append(low.upper())
+        elif len(low) == 1 and low.isalpha():
+            out.append(low.upper())
+        else:
+            out.append(low.title())
+
+    return "".join(out).strip().rstrip(".")
+
+
+def _pdf_stem_from_sheet_name(sheet_name: str, date_prefix: str) -> str:
+    """
+    Naming convention (as confirmed):
+      - Distribution tabs: '{M-D} ABC East Open Order Report'
+      - Direct tabs:       '{M-D} Bloom – Direct Open Order Report'
+      - Contractor tabs:   '{M-D} JD Candler Open Order Report – QXO'
+      - Orders on Hold:    '{M-D} QXO Orders on Hold – East & West'  (always East & West)
+    """
+    s = re.sub(r"\s+", " ", (sheet_name or "").strip())
+
+    # Orders on Hold tabs: always "East & West" and ALWAYS prefixed with date.
+    m_hold = re.match(r"^Orders on Hold\s*-\s*(ABC|QXO)\s*\(East\s*&\s*West\)\s*$", s, re.I)
+    if m_hold:
+        dist = m_hold.group(1).upper()
+        return f"{date_prefix} {dist} Orders on Hold – East & West"
+
+    # Contractor tabs look like: "<contractor> - ABC East ..." OR "<contractor> - QXO West ..."
+    if " - " in s:
+        left, right = s.split(" - ", 1)
+        m_dist = re.match(r"^(ABC|QXO)\b", right.strip(), re.I)
+        if m_dist:
+            dist = m_dist.group(1).upper()
+            contractor = _titleize_company(left)
+            return f"{date_prefix} {contractor} Open Order Report – {dist}"
+
+    # Distribution tabs begin with "ABC East" / "ABC West" / "QXO East" / "QXO West"
+    m_region = re.match(r"^(ABC|QXO)\s+(East|West)\b", s, re.I)
+    if m_region:
+        dist = m_region.group(1).upper()
+        region = m_region.group(2).title()
+        return f"{date_prefix} {dist} {region} Open Order Report"
+
+    # Direct tabs contain "Direct"
+    if re.search(r"\bDirect\b", s, re.I):
+        return f"{date_prefix} {s} Open Order Report"
+
+    # Fallback
+    return f"{date_prefix} {s} Open Order Report"
+
+
+def _find_soffice() -> str:
+    """
+    Find LibreOffice 'soffice' executable across macOS/Linux.
+    """
+    candidates = [
+        shutil.which("soffice"),
+        shutil.which("libreoffice"),
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    raise RuntimeError(
+        "LibreOffice executable not found. Install LibreOffice and ensure 'soffice' "
+        "is available in PATH (or at /Applications/LibreOffice.app/Contents/MacOS/soffice)."
+    )
+
+
+def _apply_print_settings(ws: Worksheet) -> None:
+    """
+    Required print settings:
+      - Landscape orientation
+      - Narrow margins
+      - Fit all columns on one page (fit-to-width = 1)
+    """
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_margins = PageMargins(
+        left=0.25,
+        right=0.25,
+        top=0.75,
+        bottom=0.75,
+        header=0.30,
+        footer=0.30,
+    )
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    # Print area to used range
+    ws.print_area = ws.calculate_dimension()
+
+
+def _copy_sheet(src_ws: Worksheet, dst_ws: Worksheet) -> None:
+    """
+    Copy values + styles + row/col sizing + merges to a single-sheet workbook.
+    """
+    # Column dimensions
+    for col_key, dim in src_ws.column_dimensions.items():
+        dst_dim = dst_ws.column_dimensions[col_key]
+        dst_dim.width = dim.width
+        dst_dim.hidden = dim.hidden
+        dst_dim.outlineLevel = dim.outlineLevel
+        dst_dim.bestFit = dim.bestFit
+
+    # Row dimensions
+    for row_idx, dim in src_ws.row_dimensions.items():
+        dst_dim = dst_ws.row_dimensions[row_idx]
+        dst_dim.height = dim.height
+        dst_dim.hidden = dim.hidden
+        dst_dim.outlineLevel = dim.outlineLevel
+
+    # Cells + styles
+    for row in src_ws.iter_rows():
+        for cell in row:
+            if isinstance(cell, MergedCell):
+                continue
+            new_cell = dst_ws.cell(row=cell.row, column=cell.column, value=cell.value)
+            if cell.has_style:
+                new_cell._style = copy(cell._style)
+            new_cell.number_format = cell.number_format
+            new_cell.font = copy(cell.font)
+            new_cell.fill = copy(cell.fill)
+            new_cell.border = copy(cell.border)
+            new_cell.alignment = copy(cell.alignment)
+            new_cell.protection = copy(cell.protection)
+            if cell.comment:
+                new_cell.comment = copy(cell.comment)
+
+    # Merges
+    for r in src_ws.merged_cells.ranges:
+        dst_ws.merge_cells(str(r))
+
+    # Freeze panes
+    dst_ws.freeze_panes = src_ws.freeze_panes
+
+
+def _unique_path(path: Path) -> Path:
+    """
+    If path exists, add ' (2)', ' (3)'... before extension.
+    """
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix
+    for i in range(2, 500):
+        candidate = path.with_name(f"{stem} ({i}){suffix}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"Too many duplicate filenames for: {path.name}")
+
+
+def step_07_export_tabs_to_pdfs(
+        workbook_path: Union[str, os.PathLike],
+        *,
+        output_dir: Optional[Union[str, os.PathLike]] = None,
+        report_date: Optional[Union[str, dt.date, dt.datetime]] = None,
+        exclude_sheets: Optional[Sequence[str]] = None,
+) -> List[str]:
+    """
+    STEP 7 (macOS + Ubuntu headless compatible)
+
+    Exports each sheet/tab of the workbook to its own PDF:
+      - Landscape orientation
+      - Narrow margins
+      - Fit all columns to one page (width-wise)
+
+    Uses LibreOffice headless conversion.
+
+    Returns:
+      List of produced PDF absolute paths (as strings).
+    """
+    xlsx_path = Path(workbook_path)
+    if not xlsx_path.exists():
+        raise FileNotFoundError(f"Workbook not found: {xlsx_path}")
+
+    out_dir = Path(output_dir) if output_dir else Path(OUTPUT_ROOT) / "pdf_exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    date_prefix = _format_mm_dash_dd(report_date)
+    exclude = {str(s).strip().casefold() for s in (exclude_sheets or ["Sheet1"])}
+
+    soffice = _find_soffice()
+    logger.info(f"Using LibreOffice: {soffice}")
+
+    wb = load_workbook(xlsx_path)
+
+    produced: List[str] = []
+
+    with tempfile.TemporaryDirectory(prefix="open_order_pdf_") as tmp:
+        tmp_dir = Path(tmp)
+        # Isolated LO profile avoids cache/lock issues on servers & parallel runs
+        lo_profile = tmp_dir / "lo_profile"
+        lo_profile.mkdir(parents=True, exist_ok=True)
+
+        for sheet_name in wb.sheetnames:
+            if sheet_name.strip().casefold() in exclude:
+                logger.info(f"Skipping excluded sheet: {sheet_name}")
+                continue
+
+            src_ws = wb[sheet_name]
+
+            # One-sheet workbook per tab so LO exports exactly that tab
+            single = Workbook()
+            dst_ws = single.active
+            dst_ws.title = "Report"
+
+            _copy_sheet(src_ws, dst_ws)
+            _apply_print_settings(dst_ws)
+
+            tmp_xlsx = tmp_dir / f"sheet_{len(produced) + 1}.xlsx"
+            single.save(tmp_xlsx)
+
+            # Convert to PDF using LibreOffice headless
+            cmd = [
+                soffice,
+                "--headless",
+                "--nologo",
+                "--nolockcheck",
+                "--norestore",
+                f"-env:UserInstallation={lo_profile.as_uri()}",
+                "--convert-to",
+                "pdf:calc_pdf_Export",
+                "--outdir",
+                str(out_dir),
+                str(tmp_xlsx),
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+
+            generated_pdf = out_dir / f"{tmp_xlsx.stem}.pdf"
+            if not generated_pdf.exists():
+                alt = out_dir / f"{tmp_xlsx.stem}.PDF"
+                if alt.exists():
+                    generated_pdf = alt
+
+            if res.returncode != 0 or not generated_pdf.exists():
+                logger.error(
+                    "LibreOffice conversion failed.\n"
+                    f"Sheet: {sheet_name}\n"
+                    f"Return code: {res.returncode}\n"
+                    f"STDOUT: {res.stdout}\n"
+                    f"STDERR: {res.stderr}"
+                )
+                raise RuntimeError(f"PDF export failed for sheet: {sheet_name}")
+
+            # Rename to exact naming convention
+            pdf_stem = _pdf_stem_from_sheet_name(sheet_name, date_prefix)
+            pdf_name = _sanitize_filename(pdf_stem) + ".pdf"
+            final_pdf = _unique_path(out_dir / pdf_name)
+
+            generated_pdf.replace(final_pdf)
+            produced.append(str(final_pdf.resolve()))
+
+            # LO sometimes warns on stderr even when successful
+            if res.stderr.strip():
+                logger.warning(f"LibreOffice warning for '{sheet_name}': {res.stderr.strip()}")
+
+    logger.info(f"✅ Exported {len(produced)} PDFs to: {out_dir}")
+    return produced
