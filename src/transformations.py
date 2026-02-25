@@ -1717,6 +1717,44 @@ def _unique_path(path: Path) -> Path:
     raise RuntimeError(f"Too many duplicate filenames for: {path.name}")
 
 
+def _autofit_columns_to_text(ws, *, reference_ws=None, padding: int = 2) -> None:
+    """
+    Approximate Excel AutoFit: set each column width to fit the longest text
+    found in that column (using reference_ws values if provided).
+    """
+    ref = reference_ws or ws
+    max_col = max(ws.max_column, ref.max_column)
+    max_lens = [0] * max_col
+
+    # Scan values efficiently row-by-row
+    for row in ref.iter_rows(min_row=1, max_row=ref.max_row, max_col=max_col, values_only=True):
+        for idx, v in enumerate(row, start=1):
+            if v is None:
+                continue
+
+            # Convert to a display-ish string; handle multi-line cells
+            if isinstance(v, (dt.datetime, dt.date)):
+                s = v.isoformat()
+            else:
+                s = str(v)
+
+            if "\n" in s:
+                s = max(s.splitlines(), key=len)
+
+            l = len(s)
+            if l > max_lens[idx - 1]:
+                max_lens[idx - 1] = l
+
+    # Apply widths (Excel max column width is 255)
+    for idx, l in enumerate(max_lens, start=1):
+        if l <= 0:
+            continue
+        width = min(l + padding, 255)
+        letter = get_column_letter(idx)
+        ws.column_dimensions[letter].width = width
+        ws.column_dimensions[letter].bestFit = True
+
+
 def step_07_export_tabs_to_pdfs(
         workbook_path: Union[str, os.PathLike],
         *,
@@ -1751,6 +1789,7 @@ def step_07_export_tabs_to_pdfs(
     logger.info(f"Using LibreOffice: {soffice}")
 
     wb = load_workbook(xlsx_path)
+    wb_values = load_workbook(xlsx_path, data_only=True)
 
     produced: List[str] = []
 
@@ -1766,6 +1805,7 @@ def step_07_export_tabs_to_pdfs(
                 continue
 
             src_ws = wb[sheet_name]
+            ref_ws = wb_values[sheet_name]
 
             # One-sheet workbook per tab so LO exports exactly that tab
             single = Workbook()
@@ -1773,6 +1813,7 @@ def step_07_export_tabs_to_pdfs(
             dst_ws.title = "Report"
 
             _copy_sheet(src_ws, dst_ws)
+            _autofit_columns_to_text(dst_ws, reference_ws=ref_ws)
             _apply_print_settings(dst_ws)
 
             tmp_xlsx = tmp_dir / f"sheet_{len(produced) + 1}.xlsx"
