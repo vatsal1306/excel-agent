@@ -31,6 +31,15 @@ Newly created personal `@outlook.com` accounts do not have a default Azure direc
    *(Note: If that exact phrasing is missing, select "Accounts in any organizational directory and personal Microsoft accounts").*
 5. Click **Register**.
 6. On the resulting Overview page, copy the **Application (client) ID**. You will need this for your Python environment variables.
+#### Save Client ID to Environment Variables
+
+Once you have copied the **Application (client) ID** from the Azure Portal, you must save it securely so your Python scripts can access it dynamically.
+
+Create a file named `.env` in the root directory of your Python project and add your Client ID like this:
+
+```env
+OUTLOOK_CLIENT_ID=your_copied_client_id_here
+```
 
 ### Step 3: Configure Authentication (Redirect URI)
 
