@@ -1278,7 +1278,7 @@ def step_06_create_contractor_tabs(
           * Region of Ship-to Party
           * Delivery block description
       - Separate contractor jobs (Name 2) with two blank lines:
-          * On the lower blank line, merge+center+yellow columns G & H and write the job name.
+          * On the lower blank line, merge+center+yellow "Name of ship-to party" & "Name 2" and write the job name.
     """
 
     logger.info(f"starting contractor tabs. min_lines={min_lines}")
@@ -1463,7 +1463,7 @@ def step_06_create_contractor_tabs(
                 out_r += 1
                 out_r += 1  # merged header row
 
-                dws.merge_cells(start_row=out_r, start_column=7, end_row=out_r, end_column=8)
+                dws.merge_cells(start_row=out_r, start_column=ship_to_col, end_row=out_r, end_column=name2_col)
 
                 header_label = job
                 if _norm(header_label) == "":
@@ -1474,13 +1474,13 @@ def step_06_create_contractor_tabs(
                     if _norm(header_label) == "":
                         header_label = contractor
 
-                mcell = dws.cell(out_r, 7)
+                mcell = dws.cell(out_r, ship_to_col)
                 mcell.value = header_label
                 mcell.fill = yellow_fill
                 mcell.alignment = center
                 mcell.font = bold
 
-                for c in (7, 8):
+                for c in range(ship_to_col, name2_col + 1):
                     cell = dws.cell(out_r, c)
                     cell.fill = yellow_fill
                     cell.alignment = center
