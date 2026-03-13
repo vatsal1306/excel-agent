@@ -167,3 +167,4 @@ outputs
 outputs_new
 main_bckp.py
 test.ipynb
+*.bin
