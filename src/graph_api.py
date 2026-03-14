@@ -35,8 +35,11 @@ def get_inbox_delta(delta_link=None):
     headers = {
         "Authorization": f"Bearer {token}"
     }
+    params = {
+        "$select": "id, subject, from"
+    }
 
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, params=params)
 
     response.raise_for_status()
 

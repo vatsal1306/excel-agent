@@ -43,15 +43,20 @@ def process_message(user_id, message):
 
     for file_path in files:
 
-        attachment_id = message.get("id")
+        # attachment_id = message.get("id")
 
         cursor.execute(
             """
             SELECT id FROM inbound_matches
-            WHERE user_id = ? AND graph_message_id = ?
+            WHERE user_id = ? AND graph_message_id = ? AND attachment_name = ?
             """,
-            (user_id, attachment_id),
+            (
+                user_id,
+                message_id,
+                file_path.split("/")[-1]
+            ),
         )
+
         existing = cursor.fetchone()
 
         if existing:
@@ -63,11 +68,9 @@ def process_message(user_id, message):
         cursor.execute(
             """
             INSERT INTO jobs (user_id, job_type, status, created_at)
-            VALUES (?, 'automation', 'pending', ?, CURRENT_TIMESTAMP)
+            VALUES (?, 'automation', 'pending', CURRENT_TIMESTAMP)
             """,
-            (
-                user_id,
-            ),
+            (user_id,),
         )
 
         job_id = cursor.lastrowid
@@ -120,30 +123,37 @@ def run_poll_cycle():
         try:
 
             response = get_inbox_delta(delta_link)
+            while True:
 
-            messages = response.get("value", [])
+                messages = response.get("value", [])
 
-            for message in messages:
-                process_message(user_id, message)
+                for message in messages:
+                    process_message(user_id, message)
 
-            new_delta_link = response.get("@odata.deltaLink")
+                next_link = response.get("@odata.nextLink")
+                if next_link:
+                    response = get_inbox_delta(next_link)
+                    continue
 
-            if new_delta_link:
+                new_delta_link = response.get("@odata.deltaLink")
 
-                conn = get_db_connection()
-                cursor = conn.cursor()
+                if new_delta_link:
 
-                cursor.execute(
-                    """
-                    UPDATE users
-                    SET inbox_delta_link = ?, last_poll_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (new_delta_link, user_id),
-                )
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
 
-                conn.commit()
-                conn.close()
+                    cursor.execute(
+                        """
+                        UPDATE users
+                        SET inbox_delta_link = ?, last_poll_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (new_delta_link, user_id),
+                    )
+
+                    conn.commit()
+                    conn.close()
+                break
 
         except Exception as e:
 
