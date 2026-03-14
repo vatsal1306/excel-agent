@@ -4,6 +4,7 @@ import json
 from src.Logging import logger
 from src.database import get_db_connection
 from src.config import POLL_INTERVAL_SECONDS
+from src.automation_runner import run_excel_automation
 
 
 def fetch_pending_jobs():
@@ -93,7 +94,7 @@ def process_job(job):
 
         mark_job_running(job_id)
 
-        result = run_automation(job)
+        result = run_excel_automation(job)
 
         mark_job_completed(job_id, result)
 
