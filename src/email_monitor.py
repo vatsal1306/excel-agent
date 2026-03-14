@@ -1,63 +1,139 @@
 import time
 
-import requests
+from src.Logging import logger
+from src.config import POLL_INTERVAL_SECONDS, TARGET_SENDER_EMAIL
+from src.database import get_db_connection
+from src.graph_api import get_inbox_delta
+from src.utils import sender_matches
+from src.attachment_handler import download_xlsx_attachments
 
-from src.oauth2.headless_auth import get_access_token
-from src.config import POLL_INTERVAL_SECONDS
 
-
-GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0/me/messages"
-
-
-def check_inbox():
+def process_message(user_id, message):
     """
-    Fetch latest emails from Outlook inbox
+    Process a single message returned from Graph delta query.
     """
 
-    token = get_access_token()
+    message_id = message.get("id")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    sender = (
+        message.get("from", {})
+        .get("emailAddress", {})
+        .get("address")
+    )
 
-    params = {
-        "$select": "subject,from",
-        "$top": 10
-    }
+    subject = message.get("subject")
 
-    response = requests.get(GRAPH_ENDPOINT, headers=headers, params=params)
+    logger.info(f"Checking message {message_id} from {sender}")
 
-    if response.status_code != 200:
-        print("Graph API error:", response.text)
+    if not sender_matches(sender, TARGET_SENDER_EMAIL):
+        logger.info("Sender does not match rule. Skipping.")
         return
 
-    emails = response.json().get("value", [])
+    logger.info(f"Matched sender. Subject: {subject}")
 
-    print(f"Found {len(emails)} emails\n")
+    files = download_xlsx_attachments(message_id)
 
-    for email in emails:
-        sender = email.get("from", {}).get("emailAddress", {}).get("address")
-        subject = email.get("subject")
+    if not files:
+        logger.info("No XLSX attachments found.")
+        return
 
-        print(f"Email from {sender} | Subject: {subject}")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    for file_path in files:
+
+        logger.info(f"Creating automation job for file: {file_path}")
+
+        cursor.execute(
+            """
+            INSERT INTO jobs (user_id, file_path, status, created_at)
+            VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)
+            """,
+            (user_id, file_path),
+        )
+
+    conn.commit()
+    conn.close()
 
 
-def start_monitor():
+def run_poll_cycle():
+    """
+    Executes one inbox polling cycle.
+    """
 
-    print("Starting email monitor...\n")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, inbox_delta_link FROM users WHERE auth_status='active'")
+
+    users = cursor.fetchall()
+    if not users:
+        logger.info("No active users found. Skipping poll cycle.")
+        return
+
+    conn.close()
+
+    for user in users:
+
+        user_id = user["id"]
+        delta_link = user["inbox_delta_link"]
+
+        logger.info(f"Polling inbox for user {user_id}")
+
+        try:
+
+            response = get_inbox_delta(delta_link)
+
+            messages = response.get("value", [])
+
+            for message in messages:
+                process_message(user_id, message)
+
+            new_delta_link = response.get("@odata.deltaLink")
+
+            if new_delta_link:
+
+                conn = get_db_connection()
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET inbox_delta_link = ?, last_poll_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (new_delta_link, user_id),
+                )
+
+                conn.commit()
+                conn.close()
+
+        except Exception as e:
+
+            logger.error(f"Inbox poll failed for user {user_id}: {str(e)}")
+
+
+def start_email_monitor():
+    """
+    Main polling loop.
+    """
+
+    logger.info("Email monitor started")
 
     while True:
-        try:
-            print("Checking inbox...\n")
-            check_inbox()
-        except Exception as e:
-            print("Monitor error:", e)
 
-        print(f"\nSleeping for {POLL_INTERVAL_SECONDS} seconds...\n")
+        try:
+
+            run_poll_cycle()
+
+        except Exception as e:
+
+            logger.error(f"Polling loop failure: {str(e)}")
+
+        logger.info(f"Sleeping for {POLL_INTERVAL_SECONDS} seconds")
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
-    start_monitor()
+    start_email_monitor()

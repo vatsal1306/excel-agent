@@ -24,6 +24,25 @@ def get_inbox_messages():
     return response.json()
 
 
+def get_inbox_delta(delta_link=None):
+    token = get_access_token()
+
+    if delta_link:
+        url = delta_link
+    else:
+        url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages/delta"
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    response = requests.get(url, headers=headers)
+
+    response.raise_for_status()
+
+    return response.json()
+
+
 def get_attachments(message_id: str):
     token = get_access_token()
 
