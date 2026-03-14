@@ -28,7 +28,15 @@ from src import OUTPUT_ROOT
 from src.Logging import logger
 
 
-def step_01(df: pd.DataFrame, save: bool = False) -> pd.DataFrame:
+def _resolve_output_root(output_root: Optional[Union[str, os.PathLike]] = None) -> str:
+    return os.fspath(output_root) if output_root is not None else OUTPUT_ROOT
+
+
+def step_01(
+        df: pd.DataFrame,
+        save: bool = False,
+        output_root: Optional[Union[str, os.PathLike]] = None,
+) -> pd.DataFrame:
     """ STEP 1 """
 
     cols_to_delete = [
@@ -89,7 +97,7 @@ def step_01(df: pd.DataFrame, save: bool = False) -> pd.DataFrame:
     logger.info(f"Remaining columns after deletion: {list(df.columns)}")
 
     if save:
-        df.to_excel(os.path.join(OUTPUT_ROOT, 'output_step1.xlsx'), index=False)
+        df.to_excel(os.path.join(_resolve_output_root(output_root), 'output_step1.xlsx'), index=False)
 
     return df
 
@@ -158,6 +166,7 @@ def step_02(
         header_scan_rows: int = 20,
         keep_net_value_blanks: bool = True,
         save: bool = False,
+        output_root: Optional[Union[str, os.PathLike]] = None,
 ):
     """STEP 2 (new order):
     1) Invoice Quantity – Only keep the zeros checked, then hide
@@ -291,7 +300,7 @@ def step_02(
         ws.column_dimensions[get_column_letter(c)].hidden = True  # :contentReference[oaicite:5]{index=5}
 
     if save:
-        wb.save(os.path.join(OUTPUT_ROOT, "output_step2.xlsx"))
+        wb.save(os.path.join(_resolve_output_root(output_root), "output_step2.xlsx"))
 
     return wb
 
@@ -589,7 +598,8 @@ def _format_mmdd(d: dt.date, *, year_len: int) -> str:
 
 
 def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header_scan_rows: int = 20,
-            blanks_last: bool = True, save_name: str = None) -> Workbook:
+            blanks_last: bool = True, save_name: str = None,
+            output_root: Optional[Union[str, os.PathLike]] = None) -> Workbook:
     """
     Sort by ONE column, save output, and RETURN the sorted workbook so it can be chained.
     """
@@ -643,7 +653,7 @@ def step_03(input_wb: Workbook, header: str, treat_as_date: bool = False, header
     )
 
     if save_name:
-        wb.save(os.path.join(OUTPUT_ROOT, save_name))
+        wb.save(os.path.join(_resolve_output_root(output_root), save_name))
 
     return wb
 
@@ -787,6 +797,7 @@ def step_04_create_distribution_tabs(
         header_scan_rows: int = 20,
         save: bool = False,
         save_name: str = "step4_distribution_tabs.xlsx",
+        output_root: Optional[Union[str, os.PathLike]] = None,
 ) -> Workbook:
     """
     STEP 4
@@ -824,7 +835,7 @@ def step_04_create_distribution_tabs(
             "No distribution sheets will be created."
         )
         if save:
-            wb.save(os.path.join(OUTPUT_ROOT, save_name))
+            wb.save(os.path.join(_resolve_output_root(output_root), save_name))
         return wb
 
     # Build headers list in current sheet order (post-deletion)
@@ -1038,7 +1049,7 @@ def step_04_create_distribution_tabs(
     logger.info(f"Completed. created_sheets={created}; final_workbook_sheets={wb.sheetnames}.")
 
     if save:
-        out_path = os.path.join(OUTPUT_ROOT, save_name)
+        out_path = os.path.join(_resolve_output_root(output_root), save_name)
         wb.save(out_path)
 
     return wb
@@ -1051,6 +1062,7 @@ def step_05_create_orders_on_hold_tabs(
         header_scan_rows: int = 20,
         save: bool = False,
         save_name: str = "step5_orders_on_hold.xlsx",
+        output_root: Optional[Union[str, os.PathLike]] = None,
 ) -> Workbook:
     """
     STEP 5 (Orders on Hold)
@@ -1218,7 +1230,7 @@ def step_05_create_orders_on_hold_tabs(
     )
 
     if save:
-        out_path = os.path.join(OUTPUT_ROOT, save_name)
+        out_path = os.path.join(_resolve_output_root(output_root), save_name)
         wb.save(out_path)
 
     return wb
@@ -1258,6 +1270,7 @@ def step_06_create_contractor_tabs(
         header_scan_rows: int = 20,
         save: bool = False,
         save_name: str = "step6_contractor_tabs.xlsx",
+        output_root: Optional[Union[str, os.PathLike]] = None,
 ) -> Workbook:
     """
     STEP 6 — OPEN ORDER REPORTS - CONTRACTORS
@@ -1503,7 +1516,7 @@ def step_06_create_contractor_tabs(
             created_tabs += 1
 
     if save:
-        wb.save(os.path.join(OUTPUT_ROOT, save_name))
+        wb.save(os.path.join(_resolve_output_root(output_root), save_name))
 
     return wb
 
