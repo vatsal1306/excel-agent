@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi>=0.135.1",
     "msal>=1.35.1",
     "notebook>=7.5.0",
     "openpyxl>=3.1.5",
@@ -11,5 +12,6 @@ dependencies = [
     "pandas-stubs~=2.3.3",
     "python-dotenv>=1.2.2",
     "tqdm>=4.67.1",
+    "uvicorn>=0.41.0",
     "xlsxwriter>=3.2.9",
 ]
