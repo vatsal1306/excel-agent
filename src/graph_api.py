@@ -1,0 +1,50 @@
+import requests
+
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+
+
+def get_inbox_messages(access_token: str):
+    url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+
+    params = {
+        "$top": 10
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def get_attachments(access_token: str, message_id: str):
+    url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+
+    response = requests.get(url, headers=headers)
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def send_email(access_token: str, email_payload: dict):
+    url = f"{GRAPH_BASE}/me/sendMail"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers, json=email_payload)
+
+    response.raise_for_status()
+
+    return True
