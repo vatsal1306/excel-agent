@@ -2,6 +2,8 @@ import os
 import re
 from datetime import datetime
 from typing import List, Dict
+from pathlib import Path
+from src.config import DOWNLOAD_DIR
 
 
 def sender_matches(message_sender: str, expected_sender: str) -> bool:
@@ -38,26 +40,23 @@ def sanitize_filename(filename: str) -> str:
     Remove unsafe characters from filenames.
     """
 
-    filename = re.sub(r"[^\w\-. ]", "_", filename)
+    filename = re.sub(r"[^\w\-.]", "_", filename)
 
     return filename
 
 
-def build_download_path(base_dir: str, message_id: str, attachment_name: str) -> str:
+def build_download_path(message_id: str, file_name: str) -> str:
     """
-    Build deterministic path for storing attachments.
-
-    Example:
-    data/downloads/{message_id}/{filename}
+    Create deterministic download path for an attachment.
     """
 
-    safe_name = sanitize_filename(attachment_name)
+    short_id = message_id[:12]
 
-    directory = os.path.join(base_dir, message_id)
+    folder = DOWNLOAD_DIR / f"msg_{short_id}"
 
-    os.makedirs(directory, exist_ok=True)
+    folder.mkdir(parents=True, exist_ok=True)
 
-    return os.path.join(directory, safe_name)
+    return folder / file_name
 
 
 def current_timestamp() -> str:

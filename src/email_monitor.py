@@ -1,4 +1,5 @@
 import time
+import json
 
 from src.Logging import logger
 from src.config import POLL_INTERVAL_SECONDS, TARGET_SENDER_EMAIL
@@ -42,15 +43,51 @@ def process_message(user_id, message):
 
     for file_path in files:
 
+        attachment_id = message.get("id")
+
+        cursor.execute(
+            """
+            SELECT id FROM inbound_matches
+            WHERE user_id = ? AND graph_message_id = ?
+            """,
+            (user_id, attachment_id),
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            logger.info("Attachment already processed. Skipping.")
+            continue
+
         logger.info(f"Creating automation job for file: {file_path}")
 
         cursor.execute(
             """
-            INSERT INTO jobs (user_id, file_path, status, created_at)
-            VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)
+            INSERT INTO jobs (user_id, job_type, status, created_at)
+            VALUES (?, 'automation', 'pending', ?, CURRENT_TIMESTAMP)
             """,
-            (user_id, file_path),
+            (
+                user_id,
+            ),
         )
+
+        job_id = cursor.lastrowid
+
+        # store inbound match
+        cursor.execute(
+            """
+            INSERT INTO inbound_matches
+            (user_id, graph_message_id, attachment_name, download_path, automation_job_id, created_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                user_id,
+                message.get("id"),
+                file_path.split("/")[-1],
+                file_path,
+                job_id
+            ),
+        )
+
 
     conn.commit()
     conn.close()
