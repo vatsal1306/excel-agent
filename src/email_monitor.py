@@ -65,12 +65,14 @@ def process_message(user_id, message):
 
         logger.info(f"Creating automation job for file: {file_path}")
 
+        payload = json.dumps({"file_path": str(file_path)})
+
         cursor.execute(
             """
-            INSERT INTO jobs (user_id, job_type, status, created_at)
-            VALUES (?, 'automation', 'pending', CURRENT_TIMESTAMP)
+            INSERT INTO jobs (user_id, job_type, status, input_json, created_at)
+            VALUES (?, 'automation', 'pending', ?, CURRENT_TIMESTAMP)
             """,
-            (user_id,),
+            (user_id,payload),
         )
 
         job_id = cursor.lastrowid
