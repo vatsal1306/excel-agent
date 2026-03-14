@@ -168,3 +168,7 @@ outputs_new
 main_bckp.py
 test.ipynb
 *.bin
+
+#DS_store
+.DS_Store
+data/.DS_Store

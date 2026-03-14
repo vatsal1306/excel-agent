@@ -1,11 +1,11 @@
 import requests
-from src.token_provider import fetch_access_token
+from src.oauth2.headless_auth import get_access_token
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
 def get_inbox_messages():
-    token = fetch_access_token()
+    token = get_access_token()
 
     url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
 
@@ -25,7 +25,7 @@ def get_inbox_messages():
 
 
 def get_attachments(message_id: str):
-    token = fetch_access_token()
+    token = get_access_token()
 
     url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
 
@@ -41,7 +41,7 @@ def get_attachments(message_id: str):
 
 
 def send_email(email_payload: dict):
-    token = fetch_access_token()
+    token = get_access_token()
 
     url = f"{GRAPH_BASE}/me/sendMail"
 
