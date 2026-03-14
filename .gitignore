@@ -169,6 +169,13 @@ main_bckp.py
 test.ipynb
 *.bin
 
-#DS_store
+#macOS
 .DS_Store
 data/.DS_Store
+
+# Database
+data/email_agent/app.db
+
+# runtime data
+data/email_agent/downloads/
+data/email_agent/outputs/

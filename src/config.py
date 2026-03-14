@@ -33,3 +33,7 @@ DOWNLOAD_DIR = BASE_DIR / "data" / "email_agent" / "downloads"
 OUTPUT_DIR = BASE_DIR / "data" / "email_agent" / "outputs"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Ensure required directories exist
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
