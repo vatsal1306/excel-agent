@@ -1,13 +1,16 @@
 import requests
+from src.token_provider import fetch_access_token
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
-def get_inbox_messages(access_token: str):
+def get_inbox_messages():
+    token = fetch_access_token()
+
     url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
 
     headers = {
-        "Authorization": f"Bearer {access_token}"
+        "Authorization": f"Bearer {token}"
     }
 
     params = {
@@ -21,11 +24,13 @@ def get_inbox_messages(access_token: str):
     return response.json()
 
 
-def get_attachments(access_token: str, message_id: str):
+def get_attachments(message_id: str):
+    token = fetch_access_token()
+
     url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
 
     headers = {
-        "Authorization": f"Bearer {access_token}"
+        "Authorization": f"Bearer {token}"
     }
 
     response = requests.get(url, headers=headers)
@@ -35,11 +40,13 @@ def get_attachments(access_token: str, message_id: str):
     return response.json()
 
 
-def send_email(access_token: str, email_payload: dict):
+def send_email(email_payload: dict):
+    token = fetch_access_token()
+
     url = f"{GRAPH_BASE}/me/sendMail"
 
     headers = {
-        "Authorization": f"Bearer {access_token}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
