@@ -3,8 +3,8 @@ from src.config import DB_PATH
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory =  sqlite3.Row
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():

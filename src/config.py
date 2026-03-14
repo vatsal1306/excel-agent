@@ -6,7 +6,7 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_ID = os.getenv("OUTLOOK_CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 
@@ -26,11 +26,17 @@ EMAIL_SUBJECT = os.getenv("EMAIL_SUBJECT")
 
 TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
 
-DB_PATH = BASE_DIR / "data" / "email_agent" / "app.db"
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data/email_agent/app.db")))
 
-DOWNLOAD_DIR = BASE_DIR / "data" / "email_agent" / "downloads"
+DOWNLOAD_DIR = Path(os.getenv(
+    "DOWNLOAD_DIR",
+    str(BASE_DIR / "data/email_agent/downloads")
+))
 
-OUTPUT_DIR = BASE_DIR / "data" / "email_agent" / "outputs"
+OUTPUT_DIR = Path(os.getenv(
+    "OUTPUT_DIR",
+    str(BASE_DIR / "data/email_agent/outputs")
+))
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 

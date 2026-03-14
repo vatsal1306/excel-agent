@@ -5,6 +5,7 @@ from typing import List
 from src.graph_api import get_attachments
 from src.utils import find_xlsx_attachments, build_download_path
 from src.Logging import logger
+from src.config import DOWNLOAD_DIR
 
 
 def download_xlsx_attachments(message_id: str) -> List[str]:

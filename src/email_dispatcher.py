@@ -23,7 +23,7 @@ def dispatch_result_email(job, automation_result):
 
     logger.info(f"Preparing result email for job {job['id']}")
 
-    # read and encode file
+    # ---------------- READ FILE ----------------
     with open(file_path, "rb") as f:
         encoded_file = base64.b64encode(f.read()).decode("utf-8")
 
@@ -34,6 +34,22 @@ def dispatch_result_email(job, automation_result):
         "contentBytes": encoded_file,
     }
 
+    # ---------------- FIX RECIPIENT FORMAT ----------------
+    recipients = EMAIL_RECIPIENTS
+
+    if isinstance(recipients, str):
+        recipients = [recipients]
+
+    to_recipients = [
+        {
+            "emailAddress": {
+                "address": r
+            }
+        }
+        for r in recipients
+    ]
+
+    # ---------------- EMAIL PAYLOAD ----------------
     email_payload = {
         "message": {
             "subject": EMAIL_SUBJECT or "Automation Result",
@@ -41,17 +57,14 @@ def dispatch_result_email(job, automation_result):
                 "contentType": "Text",
                 "content": "Automation completed successfully. See attached output."
             },
-            "toRecipients": [
-                {
-                    "emailAddress": {
-                        "address": recipient
-                    }
-                } for recipient in EMAIL_RECIPIENTS
-            ],
+            "toRecipients": to_recipients,
             "attachments": [attachment]
         },
         "saveToSentItems": True
     }
+
+    # DEBUG LOG (very useful)
+    logger.info("Sending email via Microsoft Graph")
 
     send_email(email_payload)
 

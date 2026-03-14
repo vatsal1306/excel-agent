@@ -29,11 +29,12 @@ def run_excel_automation(job):
 
     logger.info(f"Using temporary run directory: {run_dir}")
 
-    # Override OUTPUT_ROOT for transformations
+    # Redirect transformation output
     original_output_root = src.OUTPUT_ROOT
     src.OUTPUT_ROOT = str(run_dir)
 
     try:
+
         # ------------------ JOB PAYLOAD ------------------
         input_json = job["input_json"]
 
@@ -126,44 +127,52 @@ def run_excel_automation(job):
             save_name="step6_contractor_tabs.xlsx",
         )
 
-        # ------------------ STEP 7 (PDF EXPORT) ------------------
+        # Ensure workbook exists for Step 7
+        final_step6_path = run_dir / "step6_contractor_tabs.xlsx"
+        wb.save(final_step6_path)
+
+        # ------------------ STEP 7 ------------------
         logger.info("Running transformation STEP 7")
 
         pdf_files = T.step_07_export_tabs_to_pdfs(
-            workbook_path=os.path.join(run_dir, "step6_contractor_tabs.xlsx"),
-            output_dir=os.path.join(run_dir, "pdf_exports"),
+            workbook_path=run_dir / "step6_contractor_tabs.xlsx",
+            output_dir=run_dir / "pdf_exports",
             report_date=dt.date.today(),
             exclude_sheets=["Sheet1"]
         )
 
         # ------------------ MOVE FINAL OUTPUT ------------------
+
         final_output_dir = Path(original_output_root)
         final_output_dir.mkdir(parents=True, exist_ok=True)
 
         final_excel = final_output_dir / "step6_contractor_tabs.xlsx"
         shutil.move(run_dir / "step6_contractor_tabs.xlsx", final_excel)
 
-        # Move PDFs
-        pdf_src = run_dir / "pdf_exports"
         pdf_dst = final_output_dir / "pdf_exports"
         pdf_dst.mkdir(parents=True, exist_ok=True)
 
-        if pdf_src.exists():
-            for pdf in pdf_src.glob("*.pdf"):
-                shutil.move(str(pdf), pdf_dst / pdf.name)
+        moved_pdfs = []
+
+        for pdf in pdf_files:
+            src_pdf = Path(pdf)
+            dst_pdf = pdf_dst / src_pdf.name
+            shutil.move(str(src_pdf), dst_pdf)
+            moved_pdfs.append(str(dst_pdf))
 
         logger.info(f"Automation output generated: {final_excel}")
 
         result = {
             "output_file": str(final_excel),
-            "pdf_files": [str(p) for p in pdf_dst.glob("*.pdf")]
+            "pdf_files": moved_pdfs
         }
 
         return result
 
     finally:
+
         # Restore OUTPUT_ROOT
         src.OUTPUT_ROOT = original_output_root
 
-        # Cleanup temporary run directory
+        # Cleanup run directory
         shutil.rmtree(run_dir, ignore_errors=True)
