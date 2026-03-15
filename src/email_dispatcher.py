@@ -52,7 +52,7 @@ def dispatch_result_email(job, automation_result):
     # ---------------- EMAIL PAYLOAD ----------------
     email_payload = {
         "message": {
-            "subject": EMAIL_SUBJECT or "Automation Result",
+            "subject": EMAIL_SUBJECT,
             "body": {
                 "contentType": "Text",
                 "content": "Automation completed successfully. See attached output."

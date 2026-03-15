@@ -8,9 +8,13 @@ from src.config import (
     REDIRECT_URI
 )
 
-from src.database import get_db_connection
 from src.crypto import encrypt_token
 from src.graph_api import get_inbox_delta
+
+from src.database import (
+    create_user_with_tokens,
+    update_user_delta_link
+)
 
 
 AUTH_BASE = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0"
@@ -72,33 +76,12 @@ def store_tokens(token_data):
     encrypted_access = encrypt_token(access_token)
     encrypted_refresh = encrypt_token(refresh_token)
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO users (
-            email,
-            encrypted_access_token,
-            encrypted_refresh_token,
-            token_expires_at,
-            auth_status,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)
-        """,
-        (
-            "connected_user",
-            encrypted_access,
-            encrypted_refresh,
-            expiry_time.isoformat(),
-        ),
+    user_id = create_user_with_tokens(
+        "connected_user",
+        encrypted_access,
+        encrypted_refresh,
+        expiry_time.isoformat(),
     )
-
-    user_id = cursor.lastrowid
-
-    conn.commit()
-    conn.close()
 
     return user_id
 
@@ -109,24 +92,11 @@ def baseline_inbox_sync(user_id):
     Just store deltaLink checkpoint.
     """
 
-    response = get_inbox_delta(None)
+    response = get_inbox_delta(user_id, None)
 
     delta_link = response.get("@odata.deltaLink")
 
     if not delta_link:
         raise Exception("Delta link missing during baseline sync")
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE users
-        SET inbox_delta_link = ?
-        WHERE id = ?
-        """,
-        (delta_link, user_id),
-    )
-
-    conn.commit()
-    conn.close()
+    update_user_delta_link(user_id, delta_link)
