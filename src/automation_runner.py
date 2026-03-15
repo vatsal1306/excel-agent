@@ -1,42 +1,40 @@
-import os
 import json
 import shutil
 import uuid
-import datetime as dt
-import pandas as pd
-import src
-
 from pathlib import Path
 
-import src.transformations as T
+import src
 
 from src.Logging import logger
 from src import OUTPUT_ROOT
+from src.run_transforms import main as run_transforms
 
 
 def run_excel_automation(job):
     """
-    Executes automation logic on the downloaded Excel file.
-    Uses a temporary run directory to prevent partial outputs.
+    Execute Excel automation pipeline for a job.
+
+    Uses a temporary run directory so partial outputs are never exposed
+    in the main output folder.
     """
 
     job_id = job["id"]
 
-    # ------------------ TEMP RUN DIRECTORY ------------------
+    # ---------------- TEMP RUN DIRECTORY ----------------
     run_id = f"job_{job_id}_{uuid.uuid4().hex[:6]}"
     run_dir = Path(OUTPUT_ROOT) / "_runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Using temporary run directory: {run_dir}")
 
-    # Redirect transformation output
+    # Temporarily redirect OUTPUT_ROOT
     original_output_root = src.OUTPUT_ROOT
     src.OUTPUT_ROOT = str(run_dir)
 
     try:
 
-        # ------------------ JOB PAYLOAD ------------------
-        input_json = job["input_json"]
+        # ---------------- JOB PAYLOAD ----------------
+        input_json = job.get("input_json")
 
         if not input_json:
             raise Exception("Job input_json missing")
@@ -55,99 +53,30 @@ def run_excel_automation(job):
 
         logger.info(f"Processing Excel file: {file_path}")
 
-        # ------------------ LOAD EXCEL ------------------
-        df = pd.read_excel(file_path, engine="openpyxl")
+        # ---------------- RUN PIPELINE ----------------
+        # run_transforms already handles step1–step7 pipeline
+        run_transforms(str(file_path))
 
-        # ------------------ STEP 1 ------------------
-        logger.info("Running transformation STEP 1")
-        df = T.step_01(df, save=True)
+        # ---------------- LOCATE OUTPUT FILES ----------------
+        final_excel = run_dir / "step6_contractor_tabs.xlsx"
 
-        # ------------------ STEP 2 ------------------
-        logger.info("Running transformation STEP 2")
-        wb = T.step_02(
-            file_in=df,
-            sheet_name=None,
-            header_scan_rows=20,
-            keep_net_value_blanks=True,
-            save=True
-        )
+        if not final_excel.exists():
+            raise Exception("Expected output file not generated")
 
-        # ------------------ STEP 3 ------------------
-        logger.info("Running transformation STEP 3")
+        pdf_dir = run_dir / "pdf_exports"
 
-        wb = T.step_03(
-            wb,
-            "Last G/I Date",
-            treat_as_date=True,
-            save_name="step3_sorted_by_date.xlsx"
-        )
+        pdf_files = []
 
-        wb = T.step_03(
-            wb,
-            "Name 2",
-            save_name="step3_sorted_by_name2.xlsx"
-        )
+        if pdf_dir.exists():
+            for pdf in pdf_dir.glob("*.pdf"):
+                pdf_files.append(pdf)
 
-        wb = T.step_03(
-            wb,
-            "Name of ship-to party",
-            save_name="step3_sorted_by_shipto.xlsx"
-        )
-
-        # ------------------ STEP 4 ------------------
-        logger.info("Running transformation STEP 4")
-
-        wb = T.step_04_create_distribution_tabs(
-            wb,
-            source_sheet_name=None,
-            header_scan_rows=20,
-            save=True,
-            save_name="step4_distribution_tabs.xlsx",
-        )
-
-        # ------------------ STEP 5 ------------------
-        logger.info("Running transformation STEP 5")
-
-        wb = T.step_05_create_orders_on_hold_tabs(
-            wb,
-            source_sheet_name="Sheet1",
-            header_scan_rows=20,
-            save=True,
-            save_name="step5_orders_on_hold.xlsx",
-        )
-
-        # ------------------ STEP 6 ------------------
-        logger.info("Running transformation STEP 6")
-
-        wb = T.step_06_create_contractor_tabs(
-            wb,
-            min_lines=4,
-            header_scan_rows=20,
-            save=True,
-            save_name="step6_contractor_tabs.xlsx",
-        )
-
-        # Ensure workbook exists for Step 7
-        final_step6_path = run_dir / "step6_contractor_tabs.xlsx"
-        wb.save(final_step6_path)
-
-        # ------------------ STEP 7 ------------------
-        logger.info("Running transformation STEP 7")
-
-        pdf_files = T.step_07_export_tabs_to_pdfs(
-            workbook_path=run_dir / "step6_contractor_tabs.xlsx",
-            output_dir=run_dir / "pdf_exports",
-            report_date=dt.date.today(),
-            exclude_sheets=["Sheet1"]
-        )
-
-        # ------------------ MOVE FINAL OUTPUT ------------------
-
+        # ---------------- MOVE FINAL OUTPUT ----------------
         final_output_dir = Path(original_output_root)
         final_output_dir.mkdir(parents=True, exist_ok=True)
 
-        final_excel = final_output_dir / "step6_contractor_tabs.xlsx"
-        shutil.move(run_dir / "step6_contractor_tabs.xlsx", final_excel)
+        final_excel_dst = final_output_dir / final_excel.name
+        shutil.move(str(final_excel), final_excel_dst)
 
         pdf_dst = final_output_dir / "pdf_exports"
         pdf_dst.mkdir(parents=True, exist_ok=True)
@@ -155,24 +84,25 @@ def run_excel_automation(job):
         moved_pdfs = []
 
         for pdf in pdf_files:
-            src_pdf = Path(pdf)
-            dst_pdf = pdf_dst / src_pdf.name
-            shutil.move(str(src_pdf), dst_pdf)
-            moved_pdfs.append(str(dst_pdf))
+            dst = pdf_dst / pdf.name
+            shutil.move(str(pdf), dst)
+            moved_pdfs.append(str(dst))
 
-        logger.info(f"Automation output generated: {final_excel}")
+        logger.info(f"Automation output generated: {final_excel_dst}")
 
-        result = {
-            "output_file": str(final_excel),
+        return {
+            "output_file": str(final_excel_dst),
             "pdf_files": moved_pdfs
         }
 
-        return result
+    except Exception:
+        logger.exception(f"Automation job {job_id} failed")
+        raise
 
     finally:
 
         # Restore OUTPUT_ROOT
         src.OUTPUT_ROOT = original_output_root
 
-        # Cleanup run directory
+        # Cleanup temporary directory
         shutil.rmtree(run_dir, ignore_errors=True)
