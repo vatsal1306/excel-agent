@@ -1,79 +1,128 @@
 import requests
-from src.oauth2.headless_auth import get_access_token
+from typing import Optional
+
+from src.Logging import logger
+from src.database import get_db_connection
+from src.crypto import decrypt_token
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
-def get_inbox_messages():
-    token = get_access_token()
+def get_user_access_token(user_id: int):
+    """
+    Fetch encrypted token from DB and decrypt it
+    """
+    try:
 
-    url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
+        with get_db_connection() as conn:
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+            cursor = conn.cursor()
 
-    params = {
-        "$top": 10
-    }
+            cursor.execute(
+                """
+                SELECT encrypted_access_token
+                FROM users
+                WHERE id = ?
+                """,
+                (user_id,),
+            )
 
-    response = requests.get(url, headers=headers, params=params)
+            row = cursor.fetchone()
 
-    response.raise_for_status()
+            if not row:
+                raise Exception("User not found")
 
-    return response.json()
+            encrypted_token = row["encrypted_access_token"]
+
+            return decrypt_token(encrypted_token)
+
+    except Exception as e:
+        logger.error(f"Failed to fetch access token: {e}")
+        return None
+
+def get_inbox_delta(user_id: int, delta_link: Optional[str] = None):
+    """
+    Fetch inbox messages using Microsoft Graph delta query
+    """
+
+    try:
+
+        token = get_user_access_token(user_id)
+
+        if delta_link:
+            url = delta_link
+            params = None
+        else:
+            url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages/delta"
+
+            params = {
+                "$select": "id,subject,from,hasAttachments",
+                "$expand": "attachments"
+            }
+
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            logger.error(
+                f"Graph inbox delta failed: {response.status_code} {response.text}"
+            )
+            return None
+
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Graph request error: {e}")
+        return None
+
+    except Exception as e:
+        logger.exception(f"Unexpected error in get_inbox_delta: {e}")
+        return None
 
 
-def get_inbox_delta(delta_link=None):
-    token = get_access_token()
+def send_email(user_id: int, email_payload: dict):
+    """
+    Send email via Microsoft Graph
+    """
 
-    if delta_link:
-        url = delta_link
-    else:
-        url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages/delta"
+    try:
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-    params = {
-        "$select": "id, subject, from"
-    }
+        token = get_user_access_token(user_id)
 
-    response = requests.get(url, headers=headers, params=params)
+        url = f"{GRAPH_BASE}/me/sendMail"
 
-    response.raise_for_status()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
 
-    return response.json()
+        response = requests.post(
+            url,
+            headers=headers,
+            json=email_payload,
+            timeout=30
+        )
 
+        if response.status_code not in [200, 202]:
+            logger.error(
+                f"Send email failed: {response.status_code} {response.text}"
+            )
+            return False
 
-def get_attachments(message_id: str):
-    token = get_access_token()
+        return True
 
-    url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Graph sendMail request error: {e}")
+        return False
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    response = requests.get(url, headers=headers)
-
-    response.raise_for_status()
-
-    return response.json()
-
-
-def send_email(email_payload: dict):
-    token = get_access_token()
-
-    url = f"{GRAPH_BASE}/me/sendMail"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    response = requests.post(url, headers=headers, json=email_payload)
-
-    response.raise_for_status()
-
-    return True
+    except Exception as e:
+        logger.exception(f"Unexpected error in send_email: {e}")
+        return False
