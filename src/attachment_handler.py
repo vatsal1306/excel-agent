@@ -1,14 +1,13 @@
 import base64
 import os
-
+import uuid
 from typing import List
 
-from src.graph_api import get_attachments
 from src.utils import find_xlsx_attachments, build_download_path
 from src.Logging import logger
 
 
-def download_xlsx_attachments(message_id: str) -> List[str]:
+def download_xlsx_attachments(message: dict) -> List[str]:
     """
     Fetch attachments for a message and download only .xlsx files.
     Returns list of local file paths.
@@ -17,7 +16,9 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
     saved_files = []
 
     try:
-        attachments = get_attachments(message_id)
+        message_id = message.get("id")
+        attachments = message.get("attachments", [])
+
         # ---------- FIX 1: Handle None response ----------
         if not attachments:
             logger.warning(f"No attachment payload returned for message {message_id}")
@@ -30,8 +31,12 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
         for attachment in xlsx_files:
 
             attachment_name = attachment.get("name")
+
             # ---------- FIX 2: Prevent path traversal ----------
             safe_name = os.path.basename(attachment_name)
+            name, ext = os.path.splitext(safe_name)
+            unique_name = f"{name}_{uuid.uuid4().hex[:6]}{ext}"
+
             logger.info(
                 f"Processing attachment: {safe_name} (message_id={message_id})"
             )
@@ -43,7 +48,7 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
 
             file_bytes = base64.b64decode(content_bytes)
 
-            file_path = build_download_path(message_id, safe_name)
+            file_path = build_download_path(message_id, unique_name)
 
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
@@ -54,7 +59,7 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
 
     except Exception:
         logger.exception(
-            f"Attachment download failed for message {message_id}"
+            f"Attachment download failed for message {message.get('id')}"
         )
 
         return saved_files

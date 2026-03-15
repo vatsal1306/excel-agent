@@ -37,7 +37,7 @@ def process_message(user_id, message):
 
     logger.info(f"Matched sender. Subject: {subject}")
 
-    files = download_xlsx_attachments(message_id)
+    files = download_xlsx_attachments(message)
 
     if not files:
         logger.info("No XLSX attachments found.")
