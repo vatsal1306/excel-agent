@@ -1,9 +1,14 @@
+import os
 import time
-import json
 
 from src.Logging import logger
 from src.config import POLL_INTERVAL_SECONDS, TARGET_SENDER_EMAIL
-from src.database import get_db_connection
+from src.database import (
+    get_db_connection,
+    inbound_match_exists,
+    create_automation_job,
+    insert_inbound_match
+)
 from src.graph_api import get_inbox_delta
 from src.utils import sender_matches
 from src.attachment_handler import download_xlsx_attachments
@@ -32,32 +37,18 @@ def process_message(user_id, message):
 
     logger.info(f"Matched sender. Subject: {subject}")
 
-    files = download_xlsx_attachments(message_id)
+    files = download_xlsx_attachments(message)
 
     if not files:
         logger.info("No XLSX attachments found.")
         return
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
     for file_path in files:
 
-        # attachment_id = message.get("id")
+        filename = os.path.basename(file_path)
 
-        cursor.execute(
-            """
-            SELECT id FROM inbound_matches
-            WHERE user_id = ? AND graph_message_id = ? AND attachment_name = ?
-            """,
-            (
-                user_id,
-                message_id,
-                file_path.split("/")[-1]
-            ),
-        )
-
-        existing = cursor.fetchone()
+        # Prevent duplicate automation jobs for same attachment
+        existing = inbound_match_exists(user_id, message_id, filename)
 
         if existing:
             logger.info("Attachment already processed. Skipping.")
@@ -65,37 +56,15 @@ def process_message(user_id, message):
 
         logger.info(f"Creating automation job for file: {file_path}")
 
-        payload = json.dumps({"file_path": str(file_path)})
+        job_id = create_automation_job(user_id, file_path)
 
-        cursor.execute(
-            """
-            INSERT INTO jobs (user_id, job_type, status, input_json, created_at)
-            VALUES (?, 'automation', 'pending', ?, CURRENT_TIMESTAMP)
-            """,
-            (user_id,payload),
+        insert_inbound_match(
+            user_id,
+            message_id,
+            filename,
+            file_path,
+            job_id
         )
-
-        job_id = cursor.lastrowid
-
-        # store inbound match
-        cursor.execute(
-            """
-            INSERT INTO inbound_matches
-            (user_id, graph_message_id, attachment_name, download_path, automation_job_id, created_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
-            (
-                user_id,
-                message.get("id"),
-                file_path.split("/")[-1],
-                file_path,
-                job_id
-            ),
-        )
-
-
-    conn.commit()
-    conn.close()
 
 
 def run_poll_cycle():
@@ -103,17 +72,18 @@ def run_poll_cycle():
     Executes one inbox polling cycle.
     """
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT id, inbox_delta_link FROM users WHERE auth_status='active'")
+        cursor.execute(
+            "SELECT id, inbox_delta_link FROM users WHERE auth_status='active'"
+        )
 
-    users = cursor.fetchall()
+        users = cursor.fetchall()
+
     if not users:
         logger.info("No active users found. Skipping poll cycle.")
         return
-
-    conn.close()
 
     for user in users:
 
@@ -123,43 +93,45 @@ def run_poll_cycle():
         logger.info(f"Polling inbox for user {user_id}")
 
         try:
+            is_first_sync = delta_link is None
+            response = get_inbox_delta(user_id, delta_link)
 
-            response = get_inbox_delta(delta_link)
-            while True:
+            # Handle Graph API pagination
+            # Loop through paginated Graph API responses until deltaLink is reached
+            while response:
 
                 messages = response.get("value", [])
-
-                for message in messages:
-                    process_message(user_id, message)
+                # Do not process historical emails during first delta sync
+                if not is_first_sync:
+                    for message in messages:
+                        process_message(user_id, message)
 
                 next_link = response.get("@odata.nextLink")
+
                 if next_link:
-                    response = get_inbox_delta(next_link)
+                    response = get_inbox_delta(user_id, next_link)
                     continue
 
                 new_delta_link = response.get("@odata.deltaLink")
 
                 if new_delta_link:
 
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
 
-                    cursor.execute(
-                        """
-                        UPDATE users
-                        SET inbox_delta_link = ?, last_poll_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (new_delta_link, user_id),
-                    )
+                        cursor.execute(
+                            """
+                            UPDATE users
+                            SET inbox_delta_link = ?, last_poll_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (new_delta_link, user_id),
+                        )
 
-                    conn.commit()
-                    conn.close()
                 break
 
-        except Exception as e:
-
-            logger.error(f"Inbox poll failed for user {user_id}: {str(e)}")
+        except Exception:
+            logger.exception(f"Inbox poll failed for user {user_id}")
 
 
 def start_email_monitor():
@@ -175,11 +147,10 @@ def start_email_monitor():
 
             run_poll_cycle()
 
-        except Exception as e:
+        except Exception:
+            logger.exception("Polling loop failure")
 
-            logger.error(f"Polling loop failure: {str(e)}")
-
-        logger.info(f"Sleeping for {POLL_INTERVAL_SECONDS} seconds")
+        logger.info(f"Sleeping for {POLL_INTERVAL_SECONDS // 60} mins")
 
         time.sleep(POLL_INTERVAL_SECONDS)
 

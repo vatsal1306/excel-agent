@@ -1,14 +1,13 @@
 import base64
-
+import os
+import uuid
 from typing import List
 
-from src.graph_api import get_attachments
 from src.utils import find_xlsx_attachments, build_download_path
 from src.Logging import logger
-from src.config import DOWNLOAD_DIR
 
 
-def download_xlsx_attachments(message_id: str) -> List[str]:
+def download_xlsx_attachments(message: dict) -> List[str]:
     """
     Fetch attachments for a message and download only .xlsx files.
     Returns list of local file paths.
@@ -17,7 +16,13 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
     saved_files = []
 
     try:
-        attachments = get_attachments(message_id)
+        message_id = message.get("id")
+        attachments = message.get("attachments", [])
+
+        # ---------- FIX 1: Handle None response ----------
+        if not attachments:
+            logger.warning(f"No attachment payload returned for message {message_id}")
+            return []
 
         attachments = attachments.get("value", [])
 
@@ -25,22 +30,25 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
 
         for attachment in xlsx_files:
 
-            attachment_id = attachment.get("id")
             attachment_name = attachment.get("name")
 
-            logger.info(
-                f"Processing attachment: {attachment_name} (message_id={message_id})"
-            )
+            # ---------- FIX 2: Prevent path traversal ----------
+            safe_name = os.path.basename(attachment_name)
+            name, ext = os.path.splitext(safe_name)
+            unique_name = f"{name}_{uuid.uuid4().hex[:6]}{ext}"
 
+            logger.info(
+                f"Processing attachment: {safe_name} (message_id={message_id})"
+            )
             content_bytes = attachment.get("contentBytes")
 
             if not content_bytes:
-                logger.warning(f"No content for attachment {attachment_name}")
+                logger.warning(f"No content for attachment {safe_name}")
                 continue
 
             file_bytes = base64.b64decode(content_bytes)
 
-            file_path = build_download_path(message_id, attachment_name)
+            file_path = build_download_path(message_id, unique_name)
 
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
@@ -49,9 +57,10 @@ def download_xlsx_attachments(message_id: str) -> List[str]:
 
             saved_files.append(str(file_path))
 
-    except Exception as e:
-        logger.error(f"Attachment download failed for message {message_id}: {str(e)}")
-        raise
+    except Exception:
+        logger.exception(
+            f"Attachment download failed for message {message.get('id')}"
+        )
 
+        return saved_files
     return saved_files
-
