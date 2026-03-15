@@ -1,6 +1,8 @@
+import json
 import sqlite3
 from src.config import DB_PATH
 from src.Logging import logger
+
 
 def get_db_connection():
     """
@@ -14,6 +16,7 @@ def get_db_connection():
     except sqlite3.Error as e:
         logger.error(f"Database connection error: {e}")
         raise
+
 
 def init_db():
     """
@@ -54,7 +57,7 @@ def init_db():
                 automation_job_id INTEGER,
                 dispatch_job_id INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, graph_message_id, graph_attachment_id)
+                UNIQUE(user_id, graph_message_id, graph_attachment_id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
             """)
@@ -81,3 +84,71 @@ def init_db():
     except sqlite3.Error as e:
         logger.error(f"Database initialization failed: {e}")
         raise
+
+
+def inbound_match_exists(user_id, message_id, attachment_name):
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT id
+                FROM inbound_matches
+                WHERE user_id = ?
+                AND graph_message_id = ?
+                AND attachment_name = ?
+                """,
+                (user_id, message_id, attachment_name)
+            )
+
+            return cursor.fetchone()
+
+    except sqlite3.Error:
+        logger.exception("DB error while checking inbound match")
+        return None
+
+
+def insert_inbound_match(user_id, message_id, attachment_name, file_path, job_id):
+
+    try:
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO inbound_matches
+                (user_id, graph_message_id, attachment_name, download_path, automation_job_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, message_id, attachment_name, file_path, job_id),
+            )
+
+    except sqlite3.Error:
+        logger.exception("DB error while inserting inbound match")
+
+
+def create_automation_job(user_id, file_path):
+
+    try:
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            payload = json.dumps({"file_path": str(file_path)})
+
+            cursor.execute(
+                """
+                INSERT INTO jobs (user_id, job_type, status, input_json, created_at)
+                VALUES (?, 'automation', 'pending', ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, payload),
+            )
+
+            return cursor.lastrowid
+
+    except sqlite3.Error:
+        logger.exception("DB error while creating automation job")
+        return None

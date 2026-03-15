@@ -38,7 +38,7 @@ def get_user_access_token(user_id: int):
 
     except Exception as e:
         logger.error(f"Failed to fetch access token: {e}")
-        raise
+        return None
 
 def get_inbox_delta(user_id: int, delta_link: Optional[str] = None):
     """
