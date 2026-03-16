@@ -2,12 +2,12 @@ services:
     streamlit:
         build:
             context: .
-        image: samuel-streamlit:latest
-        container_name: samuel-streamlit
+        image: crs-streamlit:latest
+        container_name: crs-streamlit
         restart: unless-stopped
         stop_grace_period: 5m
-        env_file:
-            - ./deploy/streamlit.env
+#        env_file:
+#            - ./deploy/streamlit.env
         volumes:
             - ./data:/app/data
             - ./Logs:/app/Logs
