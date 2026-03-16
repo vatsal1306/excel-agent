@@ -1,0 +1,31 @@
+.git
+.idea
+.venv
+.env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+# Runtime data (mounted as volumes, not baked into image)
+Logs
+data
+
+# Build artifacts
+build
+*.egg-info
+
+# OAuth module (not used by frontend, contains cached tokens)
+src/oauth2/token_cache.bin
+
+# Dev / test files
+test.ipynb
+
+# Sample workbooks in repo root
+*.xlsx
+*.pdf
+
+# Docker and deploy files (not needed inside image)
+Dockerfile
+docker-compose.yaml
