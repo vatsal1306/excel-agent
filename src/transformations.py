@@ -1516,6 +1516,8 @@ def step_06_create_contractor_tabs(
             created_tabs += 1
 
     if save:
+        for sheet_name in wb.sheetnames:
+            _autofit_columns_to_text(wb[sheet_name])
         wb.save(os.path.join(_resolve_output_root(output_root), save_name))
 
     return wb
