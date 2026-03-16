@@ -6,21 +6,18 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("CRS_Agent")
 logger.setLevel(logging.INFO)
 
-log_dirname = "Logs"
-log_filename = "app.log"
-log_filepath = os.path.join(os.getcwd(), log_dirname, log_filename)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_LOG_DIR = os.path.join(_PROJECT_ROOT, "Logs")
+_LOG_FILE = os.path.join(_LOG_DIR, "app.log")
 
-os.makedirs(log_dirname, exist_ok=True)
-
-if not os.path.exists(log_filepath):
-    open(log_filepath, "w").close()
+os.makedirs(_LOG_DIR, exist_ok=True)
 
 formatter = logging.Formatter('%(asctime)s | %(filename)s | %(lineno)s | %(levelname)s | %(message)s')
 
-file_handler = RotatingFileHandler(log_filepath)
+file_handler = RotatingFileHandler(_LOG_FILE, maxBytes=10_000_000, backupCount=5)
 file_handler.setFormatter(formatter)
 file_handler.setLevel(logging.INFO)
 
