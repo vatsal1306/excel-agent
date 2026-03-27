@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict
 
 import msal
@@ -16,7 +17,6 @@ REDIRECT_URI = envs.get('REDIRECT_URI')
 
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPES = ["Mail.ReadWrite", "Mail.Send"]
-CACHE_FILE = "token_cache.bin"
 
 app = FastAPI(
     title="CRS Email Automation Service",
@@ -106,11 +106,15 @@ async def callback(request: Request) -> HTMLResponse:
             logger.error(f"MSAL Token Acquisition Error: {error_msg}")
             return HTMLResponse(f"<h3>Login failed:</h3> <p>{error_msg}</p>", status_code=401)
 
+        # Generate a unique filename with a timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dynamic_cache_file = f"token_cache_{timestamp}.bin"
+
         # Write the successful token cache to the file system
-        with open(CACHE_FILE, "w") as f:
+        with open(dynamic_cache_file, "w") as f:
             f.write(cache.serialize())
 
-        logger.info(f"Successfully authenticated and saved tokens to {CACHE_FILE}")
+        logger.info(f"Successfully authenticated and saved tokens to {dynamic_cache_file}")
 
         # Clear the session flow for security
         request.session.pop("flow", None)
