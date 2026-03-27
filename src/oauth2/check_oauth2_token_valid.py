@@ -7,9 +7,9 @@ from src import envs
 
 # Use your exact Client ID
 CLIENT_ID = envs['OUTLOOK_CLIENT_ID']
-AUTHORITY = 'https://login.microsoftonline.com/consumers'
+AUTHORITY = f"https://login.microsoftonline.com/{envs['OUTLOOK_TENANT_ID']}"
 SCOPES = ['Mail.ReadWrite', 'Mail.Send']
-CACHE_FILE = '/Users/vatsal/Documents/hpk/samuel/src/oauth2/token_cache.bin'
+CACHE_FILE = '/Users/vatsal/Documents/hpk/samuel/token_cache.bin'
 
 
 def get_access_token():
