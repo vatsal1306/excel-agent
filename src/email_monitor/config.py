@@ -1,6 +1,7 @@
 """
 Configuration for the email monitoring agent.
-All values are read from the project ``.env`` file via ``dotenv_values``.
+Values are read from ``.env`` (if present) and overridden by process environment
+variables (e.g. Docker Compose ``env_file`` / ``environment``).
 """
 
 import os
@@ -26,7 +27,7 @@ class MonitorConfig:
     @classmethod
     def from_env(cls) -> "MonitorConfig":
         """
-        Build a ``MonitorConfig`` from environment / ``.env`` values.
+        Build a ``MonitorConfig`` from environment (``.env`` file plus ``os.environ``).
 
         Required keys:
             ``TARGET_SENDER_EMAIL``, ``OUTLOOK_CLIENT_ID``,
@@ -71,5 +72,7 @@ class MonitorConfig:
         """ Retrieve the value of a required environment variable. """
         value = envs.get(key, "")
         if not value:
-            raise ValueError(f"Required environment variable '{key}' is not set in .env")
+            raise ValueError(
+                f"Required environment variable '{key}' is not set (.env or environment)"
+            )
         return value
