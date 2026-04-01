@@ -1,13 +1,17 @@
+# Stack: Streamlit UI + long-running Outlook mail monitor (same image, different command).
+# Copy .env beside this file (or use deploy/*.env) with OUTLOOK_* , TARGET_SENDER_EMAIL, etc.
+# Shared volume ./data holds SQLite (email_agent.db) and pipeline outputs for both services.
+
 services:
     streamlit:
         build:
             context: .
-        image: crs-streamlit:latest
+        image: crs-streamlit-image:latest
         container_name: crs-streamlit
         restart: unless-stopped
         stop_grace_period: 5m
-#        env_file:
-#            - ./deploy/streamlit.env
+        env_file:
+            - .env
         volumes:
             - ./data:/app/data
             - ./Logs:/app/Logs
@@ -29,3 +33,28 @@ services:
             timeout: 10s
             retries: 5
             start_period: 90s
+
+    mail-agent:
+        build:
+            context: .
+        image: crs-agent-image:latest
+        container_name: crs-agent
+        restart: unless-stopped
+        # Allow up to one poll interval (default 300s) for graceful shutdown after SIGTERM.
+        stop_grace_period: 6m
+        env_file:
+            - .env
+        volumes:
+            - ./data:/app/data
+            - ./Logs:/app/Logs
+        command: [ "python", "run_monitor.py" ]
+        deploy:
+            resources:
+                limits:
+                    memory: 4G
+                    cpus: "2.0"
+        logging:
+            driver: json-file
+            options:
+                max-size: "50m"
+                max-file: "5"

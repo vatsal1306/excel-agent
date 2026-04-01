@@ -17,6 +17,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY run_monitor.py ./
 
 RUN pip install --upgrade pip && pip install .
 
