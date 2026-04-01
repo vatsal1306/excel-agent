@@ -9,7 +9,7 @@ All HTTP errors are surfaced as :class:`GraphAPIError` (or the more specific
 
 import base64
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -60,7 +60,7 @@ class GraphClient:
     :class:`TokenExpiredError` so the caller can refresh and retry.
 
     Args:
-        access_token: A bearer token with ``Mail.ReadWrite`` scope.
+        access_token: A bearer token with ``Mail.ReadWrite`` and ``Mail.Send`` scopes.
     """
 
     def __init__(self, access_token: str):
@@ -185,6 +185,50 @@ class GraphClient:
         )
         return attachments
 
+    def send_mail(
+            self,
+            *,
+            subject: str,
+            body_text: str,
+            to_addresses: List[str],
+            file_attachments: List[Tuple[str, str, bytes]],
+    ) -> None:
+        """
+        Send an email from the signed-in user via ``POST /me/sendMail``.
+
+        Args:
+            subject: Message subject line.
+            body_text: Plain-text body (may be empty).
+            to_addresses: Recipient SMTP addresses.
+            file_attachments: Sequence of ``(filename, content_type, content_bytes)``.
+
+        Note:
+            Requires ``Mail.Send`` (and typically ``Mail.ReadWrite``) on the token.
+        """
+        attachments_payload: List[Dict[str, Any]] = []
+        for name, content_type, content_bytes in file_attachments:
+            attachments_payload.append(
+                {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": name,
+                    "contentType": content_type,
+                    "contentBytes": base64.b64encode(content_bytes).decode("ascii"),
+                }
+            )
+
+        payload = {
+            "message": {
+                "subject": subject,
+                "body": {"contentType": "Text", "content": body_text},
+                "toRecipients": [
+                    {"emailAddress": {"address": addr}} for addr in to_addresses
+                ],
+                "attachments": attachments_payload,
+            },
+            "saveToSentItems": True,
+        }
+        self._post(f"{_GRAPH_BASE}/me/sendMail", payload)
+
     # ------------------------------------------------------------------
     # HTTP helpers
     # ------------------------------------------------------------------
@@ -192,6 +236,29 @@ class GraphClient:
     def _get(self, url: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         response = self._session.get(url, params=params, timeout=60)
         return self._handle_response(response)
+
+    def _post(self, url: str, body: Dict[str, Any]) -> None:
+        """POST JSON.  ``/me/sendMail`` returns **202 Accepted** with an empty body."""
+        response = self._session.post(url, json=body, timeout=120)
+        if response.status_code == 401:
+            raise TokenExpiredError(
+                status_code=401,
+                message="Access token expired or invalid.",
+                response=_safe_json(response),
+            )
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "60")
+            raise GraphAPIError(
+                status_code=429,
+                message=f"Rate limited. Retry-After: {retry_after}s.",
+                response=_safe_json(response),
+            )
+        if not response.ok:
+            raise GraphAPIError(
+                status_code=response.status_code,
+                message=response.text[:500],
+                response=_safe_json(response),
+            )
 
     @staticmethod
     def _handle_response(response: requests.Response) -> Dict[str, Any]:

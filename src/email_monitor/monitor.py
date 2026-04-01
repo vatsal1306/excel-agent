@@ -11,17 +11,61 @@ import os
 import signal
 import time
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from src import ROOT_DIR
 from src.Logging import logger
 from src.db.database import Database
 from src.db.models import User
 from src.email_monitor.config import MonitorConfig
-from src.email_monitor.exceptions import TokenExpiredError, TokenRefreshError
+from src.email_monitor.exceptions import GraphAPIError, TokenExpiredError, TokenRefreshError
 from src.email_monitor.graph_client import Attachment, EmailMessage, GraphClient
 from src.email_monitor.token_manager import TokenManager
 from src.run_transforms import run_pipeline
+
+_OPEN_ORDER_REPORT_SUBJECT = "Open Order Reports"
+_OPEN_ORDER_REPORT_RECIPIENTS = (
+    "zack@crsllcreps.com",
+    "sean@crsllcreps.com",
+    "kelly@crsllcreps.com",
+)
+_XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _collect_open_order_report_attachments(output_dir: str) -> List[Tuple[str, str, bytes]]:
+    """
+    Load ``step6_contractor_tabs.xlsx`` and every ``*.pdf`` under ``pdf_exports/``.
+    Returns ``(filename, content_type, bytes)`` tuples suitable for Graph ``sendMail``.
+    """
+    files: List[Tuple[str, str, bytes]] = []
+    xlsx_path = os.path.join(output_dir, "step6_contractor_tabs.xlsx")
+    if not os.path.isfile(xlsx_path):
+        logger.error(
+            f"Expected pipeline output missing: {xlsx_path}. "
+            f"Skipping Open Order Reports email."
+        )
+        return files
+
+    with open(xlsx_path, "rb") as f:
+        files.append(("step6_contractor_tabs.xlsx", _XLSX_TYPE, f.read()))
+
+    pdf_dir = os.path.join(output_dir, "pdf_exports")
+    if not os.path.isdir(pdf_dir):
+        logger.warning(
+            f"No pdf_exports directory at {pdf_dir}; sending Excel attachment only."
+        )
+        return files
+
+    for name in sorted(os.listdir(pdf_dir)):
+        if not name.lower().endswith(".pdf"):
+            continue
+        path = os.path.join(pdf_dir, name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, "rb") as f:
+            files.append((name, "application/pdf", f.read()))
+
+    return files
 
 
 class EmailMonitor:
@@ -277,7 +321,7 @@ class EmailMonitor:
         for attachment in attachments:
             logger.info(
                 f"Running pipeline for attachment '{attachment.name}' "
-                f"from email '{message.subject}' (user={user.email})."
+                f"from email subject '{message.subject}' (user={user.email})."
             )
             try:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -287,32 +331,55 @@ class EmailMonitor:
                 output_dir = run_pipeline(
                     attachment.content_bytes, output_root=output_root
                 )
-                self._handle_pipeline_output(user, message, attachment, output_dir)
             except Exception:
                 logger.exception(
                     f"Pipeline failed for attachment '{attachment.name}' "
                     f"from email '{message.subject}'."
                 )
+                continue
+
+            try:
+                self._handle_pipeline_output(user, client, message, attachment, output_dir)
+            except GraphAPIError:
+                logger.exception(
+                    f"Failed to send Open Order Reports email for user={user.email}, "
+                    f"attachment='{attachment.name}'."
+                )
 
     # ------------------------------------------------------------------
-    # Post-pipeline placeholder
+    # Post-pipeline: send Open Order Reports to CRS recipients
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _handle_pipeline_output(
+            self,
             user: User,
+            client: GraphClient,
             message: EmailMessage,
             attachment: Attachment,
             output_dir: str,
     ) -> None:
         """
-        Placeholder hook for post-pipeline actions.
-
-        TODO: Implement desired behaviour — e.g. email results back to the
-        user, upload to a shared drive, send a webhook notification, etc.
+        Email pipeline artifacts from the monitored mailbox: ``step6_contractor_tabs.xlsx``
+        plus all PDFs under ``pdf_exports/``, to the configured CRS addresses.
         """
         logger.info(
             f"Pipeline output for user={user.email}, "
             f"email='{message.subject}', attachment='{attachment.name}' "
             f"saved to: {output_dir}"
+        )
+
+        file_attachments = _collect_open_order_report_attachments(output_dir)
+        if not file_attachments:
+            return
+
+        client.send_mail(
+            subject=_OPEN_ORDER_REPORT_SUBJECT,
+            body_text="",
+            to_addresses=list(_OPEN_ORDER_REPORT_RECIPIENTS),
+            file_attachments=file_attachments,
+        )
+        logger.info(
+            f"Sent '{_OPEN_ORDER_REPORT_SUBJECT}' from {user.email} to "
+            f"{len(_OPEN_ORDER_REPORT_RECIPIENTS)} recipient(s) "
+            f"({len(file_attachments)} attachment(s))."
         )
