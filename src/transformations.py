@@ -1513,6 +1513,17 @@ def step_06_create_contractor_tabs(
             for c in sorted(cols_to_delete, reverse=True):
                 dws.delete_cols(c)
 
+            transit_time_col = None
+            for c in range(1, dws.max_column + 1):
+                if _norm(dws.cell(1, c).value) == _norm("TransitTime"):
+                    transit_time_col = c
+                    break
+
+            if transit_time_col is not None:
+                for r in range(1, dws.max_row + 1):
+                    cell = dws.cell(r, transit_time_col)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+
             created_tabs += 1
 
     if save:
