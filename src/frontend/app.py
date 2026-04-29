@@ -1,4 +1,5 @@
 import io
+import hashlib
 import os
 import sys
 import threading
@@ -11,7 +12,15 @@ ROOT_DIR_PATH = os.path.dirname(os.path.dirname(APP_DIR))
 if ROOT_DIR_PATH not in sys.path:
     sys.path.insert(0, ROOT_DIR_PATH)
 
-from src import ROOT_DIR
+from src import ROOT_DIR, envs
+from src.frontend.file_chat import (
+    DEFAULT_OPENAI_MODEL,
+    SourceChunk,
+    answer_question,
+    build_file_inventory,
+    parse_uploaded_file,
+    retrieve_chunks,
+)
 from src.run_transforms import run_pipeline
 
 DATA_DIR = os.path.join(ROOT_DIR, "data", "runs", "ui")
@@ -108,14 +117,186 @@ def _render_downloads(run_dir: str) -> None:
 
 def _render_landing() -> None:
     st.title("CRS Excel Agent")
-    st.write("Run the existing Excel transformation pipeline from the browser.")
+    st.write("Run the existing Excel transformation pipeline or ask questions about uploaded files.")
     st.write(
         f"The job usually takes about {EXPECTED_RUNTIME_MINUTES} minutes and returns the final workbook plus PDF exports."
     )
 
-    if st.button("Manual Trigger Agent", type="primary"):
-        st.session_state["ui_step"] = "upload"
-        st.rerun()
+    trigger_col, chat_col = st.columns(2)
+    with trigger_col:
+        if st.button("Manual Trigger Agent", type="primary", use_container_width=True):
+            st.session_state["ui_step"] = "upload"
+            st.rerun()
+    with chat_col:
+        if st.button("Chat with CRS AI", use_container_width=True):
+            st.session_state["ui_step"] = "chat"
+            st.rerun()
+
+
+def _get_openai_api_key() -> str:
+    return os.environ.get("OPENAI_API_KEY") or envs.get("OPENAI_API_KEY", "")
+
+
+def _get_openai_model() -> str:
+    return os.environ.get("OPENAI_MODEL") or envs.get("OPENAI_MODEL", "") or DEFAULT_OPENAI_MODEL
+
+
+def _uploaded_file_payloads(uploaded_files) -> list[tuple[str, bytes]]:
+    return [(uploaded_file.name, uploaded_file.getvalue()) for uploaded_file in uploaded_files]
+
+
+def _payload_signature(payloads: list[tuple[str, bytes]]) -> str:
+    digest = hashlib.sha256()
+    for file_name, data in payloads:
+        digest.update(file_name.encode("utf-8", errors="replace"))
+        digest.update(len(data).to_bytes(8, "big", signed=False))
+        digest.update(hashlib.sha256(data).digest())
+    return digest.hexdigest()
+
+
+def _reset_chat_state() -> None:
+    st.session_state["chat_chunks"] = []
+    st.session_state["chat_messages"] = []
+    st.session_state["chat_parse_errors"] = []
+    st.session_state["chat_file_signature"] = ""
+
+
+def _parse_chat_payloads(payloads: list[tuple[str, bytes]]) -> tuple[list[SourceChunk], list[str]]:
+    chunks: list[SourceChunk] = []
+    errors: list[str] = []
+
+    for file_name, data in payloads:
+        try:
+            file_chunks = parse_uploaded_file(file_name, data)
+        except Exception as exc:
+            errors.append(f"{file_name}: {exc}")
+            continue
+
+        if file_chunks:
+            chunks.extend(file_chunks)
+        else:
+            errors.append(f"{file_name}: no readable text was found.")
+
+    return chunks, errors
+
+
+def _render_source_list(sources: list[SourceChunk]) -> None:
+    if not sources:
+        return
+
+    with st.expander("Sources used"):
+        for source in sources:
+            st.markdown(f"**{source.label}**")
+            st.caption(source.excerpt)
+
+
+def _render_chat_messages() -> None:
+    for message in st.session_state.get("chat_messages", []):
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+            if message["role"] == "assistant":
+                _render_source_list(message.get("sources", []))
+
+
+def _render_file_chat() -> None:
+    st.title("Ask AI / Chat with AI")
+    st.write("Upload Excel or PDF files, then ask questions about their contents.")
+
+    top_left, top_right = st.columns([5, 1])
+    with top_right:
+        if st.button("Back", use_container_width=True):
+            st.session_state["ui_step"] = "landing"
+            st.rerun()
+
+    uploaded_files = st.file_uploader(
+        "Upload Excel or PDF files",
+        type=["xlsx", "xls", "pdf"],
+        accept_multiple_files=True,
+    )
+
+    if "chat_messages" not in st.session_state:
+        _reset_chat_state()
+
+    if not uploaded_files:
+        if st.session_state.get("chat_file_signature"):
+            _reset_chat_state()
+        st.info("Upload one or more Excel or PDF files to start chatting.")
+        return
+
+    payloads = _uploaded_file_payloads(uploaded_files)
+    file_signature = _payload_signature(payloads)
+    if file_signature != st.session_state.get("chat_file_signature"):
+        with st.spinner("Reading uploaded files..."):
+            chunks, errors = _parse_chat_payloads(payloads)
+        st.session_state["chat_chunks"] = chunks
+        st.session_state["chat_messages"] = []
+        st.session_state["chat_parse_errors"] = errors
+        st.session_state["chat_file_signature"] = file_signature
+
+    chunks = st.session_state.get("chat_chunks", [])
+    errors = st.session_state.get("chat_parse_errors", [])
+
+    if errors:
+        for error in errors:
+            st.warning(error)
+
+    if chunks:
+        st.success(f"Ready to answer questions from {len(chunks)} extracted source chunk(s).")
+    else:
+        st.error("No readable content was extracted from the uploaded files.")
+        return
+
+    clear_col, model_col = st.columns([1, 3])
+    with clear_col:
+        if st.button("Clear chat", use_container_width=True):
+            st.session_state["chat_messages"] = []
+            st.rerun()
+    with model_col:
+        st.caption(f"AI model: `{_get_openai_model()}`")
+
+    api_key = _get_openai_api_key()
+    if not api_key:
+        st.error("OPENAI_API_KEY is not configured. Add it to the environment or `.env` file.")
+        _render_chat_messages()
+        st.chat_input("Ask a question about the uploaded files", disabled=True)
+        return
+
+    _render_chat_messages()
+
+    question = st.chat_input("Ask a question about the uploaded files")
+    if not question:
+        return
+
+    st.session_state["chat_messages"].append(
+        {"role": "user", "content": question, "sources": []}
+    )
+    with st.chat_message("user"):
+        st.write(question)
+
+    retrieved_chunks, matched = retrieve_chunks(question, chunks)
+    if not matched:
+        st.info("No closely matching source excerpt was found; asking AI to answer only if the uploaded files support it.")
+
+    file_inventory = build_file_inventory(chunks)
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                answer = answer_question(
+                    question,
+                    retrieved_chunks,
+                    file_inventory=file_inventory,
+                    model=_get_openai_model(),
+                    api_key=api_key,
+                )
+            except Exception as exc:
+                answer = f"AI request failed: {exc}"
+                retrieved_chunks = []
+        st.write(answer)
+        _render_source_list(retrieved_chunks)
+
+    st.session_state["chat_messages"].append(
+        {"role": "assistant", "content": answer, "sources": retrieved_chunks}
+    )
 
 
 def _render_job_runner() -> None:
@@ -177,8 +358,10 @@ def main() -> None:
 
     if st.session_state["ui_step"] == "landing":
         _render_landing()
-    else:
+    elif st.session_state["ui_step"] == "upload":
         _render_job_runner()
+    else:
+        _render_file_chat()
 
 
 if __name__ == "__main__":
