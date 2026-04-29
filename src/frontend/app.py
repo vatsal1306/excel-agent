@@ -241,7 +241,7 @@ def _render_file_chat() -> None:
             st.warning(error)
 
     if chunks:
-        st.success(f"Ready to answer questions from {len(chunks)} extracted source chunk(s).")
+        st.success(f"Ready to answer questions.")
     else:
         st.error("No readable content was extracted from the uploaded files.")
         return
