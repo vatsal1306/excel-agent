@@ -32,7 +32,21 @@ Install all dependencies:
 uv sync
 ```
 
-### 3. LibreOffice Setup
+### 3. OpenAI Configuration
+
+The Streamlit AI chat feature requires an OpenAI API key. Add this to your shell environment or to a `.env` file at the project root:
+
+```bash
+OPENAI_API_KEY="your_api_key_here"
+```
+
+Optionally set `OPENAI_MODEL` to override the default chat model:
+
+```bash
+OPENAI_MODEL="gpt-5-mini"
+```
+
+### 4. LibreOffice Setup
 
 PDF export (step 7) requires LibreOffice's `soffice` executable.
 
@@ -61,12 +75,18 @@ PDF export (step 7) requires LibreOffice's `soffice` executable.
 
 - Not supported for PDF export in this pipeline.
 
-### 4. Running the Pipeline
+### 5. Running the Pipeline
 
 Run the main script:
 
 ```bash
 python src/run_transforms.py
+```
+
+Run the Streamlit app:
+
+```bash
+streamlit run src/frontend/app.py
 ```
 
 ## Notes

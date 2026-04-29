@@ -8,9 +8,11 @@ dependencies = [
     "itsdangerous>=2.2.0",
     "msal>=1.35.1",
     "notebook>=7.5.0",
+    "openai>=2.0.0",
     "openpyxl>=3.1.5",
     "pandas>=2.3.3",
     "pandas-stubs~=2.3.3",
+    "pypdf>=6.0.0",
     "python-dotenv>=1.2.2",
     "requests>=2.31.0",
     "streamlit>=1.45.1",
@@ -18,4 +20,5 @@ dependencies = [
     "uvicorn>=0.42.0",
     "watchdog>=6.0.0",
     "xlsxwriter>=3.2.9",
+    "xlrd>=2.0.1",
 ]
