@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import zipfile
+from datetime import datetime
 
 import streamlit as st
 
@@ -63,6 +64,18 @@ def _list_download_files(run_dir: str) -> list[tuple[str, str]]:
     return files
 
 
+def _timestamped_excel_name(file_path: str) -> str:
+    base_name, extension = os.path.splitext(os.path.basename(file_path))
+    timestamp = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y%m%d_%H%M%S")
+    return f"{base_name}_{timestamp}{extension}"
+
+
+def _download_file_name(category: str, file_path: str) -> str:
+    if category == "Final workbook":
+        return _timestamped_excel_name(file_path)
+    return os.path.basename(file_path)
+
+
 def _build_download_bundle(run_dir: str, files: list[tuple[str, str]]) -> bytes:
     buffer = io.BytesIO()
 
@@ -73,7 +86,7 @@ def _build_download_bundle(run_dir: str, files: list[tuple[str, str]]) -> bytes:
             if category == "PDF export":
                 arcname = os.path.join("pdf_exports", os.path.basename(file_path))
             else:
-                arcname = os.path.basename(file_path)
+                arcname = _download_file_name(category, file_path)
             archive.write(file_path, arcname=arcname)
 
     buffer.seek(0)
@@ -103,12 +116,13 @@ def _render_downloads(run_dir: str) -> None:
     for category, file_path in files:
         if not os.path.isfile(file_path):
             continue
-        st.write(f"{category}: `{os.path.basename(file_path)}`")
+        download_name = _download_file_name(category, file_path)
+        st.write(f"{category}: `{download_name}`")
         with open(file_path, "rb") as fh:
             st.download_button(
-                f"Download {os.path.basename(file_path)}",
+                f"Download {download_name}",
                 data=fh.read(),
-                file_name=os.path.basename(file_path),
+                file_name=download_name,
                 mime="application/octet-stream",
                 key=f"download-{file_path}",
                 use_container_width=True,
